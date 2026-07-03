@@ -1,0 +1,11 @@
+
+git推送拉取可能会因网络难以进行，可以在vscode终端中配置git代理
+
+配置代理：（33210要换成实际代理端口）
+git config --global http.proxy http://127.0.0.1:33210 
+git config --global https.proxy http://127.0.0.1:33210 
+
+
+取消配置代理：
+git config --global --unset http.proxy
+git config --global --unset https.proxy
