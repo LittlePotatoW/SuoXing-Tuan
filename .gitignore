@@ -1,0 +1,48 @@
+# 本地参考文件
+referrence-local/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+.venv/
+venv/
+*.egg
+
+# Node / Electron
+node_modules/
+dist/
+dist-electron/
+
+# 前端环境（本地安装，不入仓库）
+frontend/node_modules/
+frontend/dist/
+frontend/config.json
+
+# ONNX 模型文件
+frontend/public/models/*.onnx
+
+# 环境变量
+.env
+.env.local
+.env.*.local
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# 日志
+*.log
+
+# 模型文件（大文件用 Git LFS 管理）
+*.ckpt
+*.pt
+
+# 训练数据集（本地管理，不入仓库）
+model-training/yolo-training/datasets/*/
+model-training/yolo-training/runs/

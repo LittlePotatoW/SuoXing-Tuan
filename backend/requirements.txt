@@ -1,0 +1,16 @@
+# ============================================================
+# backend/requirements.txt
+# 后端 Python 依赖
+#
+# 用法:
+#   pip install -r requirements.txt
+# ============================================================
+
+fastapi>=0.110.0
+uvicorn[standard]>=0.29.0
+python-multipart>=0.0.9
+ultralytics>=8.2.0
+opencv-python>=4.9.0
+numpy>=1.26.0
+Pillow>=10.0.0
+PyYAML>=6.0
