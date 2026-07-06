@@ -24,6 +24,7 @@ from fastapi import FastAPI, APIRouter, UploadFile, File, HTTPException, WebSock
 from fastapi.middleware.cors import CORSMiddleware
 
 from inference import InferenceEngine, InferenceResponse, DetectionResult
+from reconstruction.routes import router as reconstruction_router
 
 # ==================== 日志 ====================
 
@@ -54,6 +55,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.include_router(reconstruction_router)
 
 # ==================== REST API ====================
 

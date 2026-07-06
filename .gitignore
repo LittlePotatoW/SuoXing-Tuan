@@ -43,6 +43,9 @@ Thumbs.db
 *.ckpt
 *.pt
 
+# 测试输出
+backend/tests/output/
+
 # 训练数据集（本地管理，不入仓库）
 model-training/yolo-training/datasets/*/
 model-training/yolo-training/runs/
