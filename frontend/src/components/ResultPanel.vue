@@ -7,7 +7,8 @@
   <div style="padding: 12px; overflow-y: auto">
     <h3 style="margin: 0 0 8px 0; font-size: 14px">检测结果</h3>
 
-    <div v-if="detections.length === 0" style="color: #888">
+    <div v-if="inferring" style="color: #888">推理中...</div>
+    <div v-else-if="detections.length === 0" style="color: #888">
       {{ imageLoaded ? '未检测到缺陷' : '请加载图片' }}
     </div>
 
@@ -16,7 +17,7 @@
         <tr><th>#</th><th>类别</th><th>置信度</th><th>位置</th></tr>
       </thead>
       <tbody>
-        <tr v-for="(d, i) in detections" :key="i">
+        <tr v-for="(d, i) in detections" :key="d.class_name + i">
           <td>{{ i + 1 }}</td>
           <td>
             <span :style="{ background: getColor(d.class_name), color: '#fff', padding: '1px 6px', fontSize: '11px' }">
@@ -42,6 +43,7 @@ defineProps<{
   imageLoaded: boolean
   detections: { class_name: string; confidence: number; bbox: number[] }[]
   inferenceTimeMs: number
+  inferring?: boolean
 }>()
 
 function getColor(className: string) {

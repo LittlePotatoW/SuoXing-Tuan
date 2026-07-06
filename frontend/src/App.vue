@@ -10,7 +10,9 @@
     <div style="display: flex; gap: 16px; padding: 8px 12px; align-items: center; flex-wrap: wrap">
       <ConnectionBar :connected="connected" @connect="onConnect" @disconnect="onDisconnect" />
       <span>|</span>
-      <ModelSelector :connected="connected" @modelLoaded="onModelLoaded" />
+      <button :disabled="!canInfer" @click="onInfer">推理</button>
+      <span v-if="inferring" style="color: #888">推理中...</span>
+      <span v-if="error" style="color: #e74c3c; font-weight: bold">{{ error }}</span>
     </div>
 
     <hr style="margin: 0; border-color: #333" />
@@ -27,6 +29,7 @@
         <ResultPanel
           :imageLoaded="!!imageSrc"
           :detections="detections"
+          :inferring="inferring"
           :inferenceTimeMs="inferenceTimeMs"
         />
       </div>
@@ -35,46 +38,59 @@
 </template>
 
 <script setup lang="ts">
-// ============================================================
-// App.vue — 持有所有状态，通过 props 下传，通过事件接收
-// 不使用 Pinia 等状态管理库
-// ============================================================
-import { ref } from 'vue'
+import { ref, computed } from 'vue'
 import { setHost, healthCheck, runInference } from './services/apiClient'
 import ConnectionBar from './components/ConnectionBar.vue'
-import ModelSelector from './components/ModelSelector.vue'
 import DragDropZone from './components/DragDropZone.vue'
 import ResultPanel from './components/ResultPanel.vue'
 
 const connected = ref(false)
 const imageSrc = ref<string | null>(null)
+const selectedFile = ref<File | null>(null)
 const detections = ref<{ class_name: string; confidence: number; bbox: number[] }[]>([])
 const inferenceTimeMs = ref(0)
+const inferring = ref(false)
+const error = ref('')
+
+const canInfer = computed(() => connected.value && !!selectedFile.value && !inferring.value)
 
 async function onConnect(host: string, port: number) {
+  error.value = ''
   setHost(host, port)
-  await healthCheck()
-  connected.value = true
+  try {
+    await healthCheck()
+    connected.value = true
+  } catch (e) {
+    error.value = '连接失败: ' + (e as Error).message
+  }
 }
 
 function onDisconnect() {
   connected.value = false
+  detections.value = []
+  error.value = ''
 }
 
-function onModelLoaded(_name: string) {
-  // 模型已加载到后端，后续推理自动使用
-}
-
-async function onFileDropped(file: File) {
+function onFileDropped(file: File) {
+  selectedFile.value = file
+  if (imageSrc.value) URL.revokeObjectURL(imageSrc.value)
   imageSrc.value = URL.createObjectURL(file)
+  detections.value = []
+  error.value = ''
+}
 
-  if (!connected.value) {
-    detections.value = []
-    return
+async function onInfer() {
+  if (!selectedFile.value) return
+  error.value = ''
+  inferring.value = true
+  try {
+    const result = await runInference(selectedFile.value)
+    detections.value = result.detections
+    inferenceTimeMs.value = result.inference_time_ms
+  } catch (e) {
+    error.value = '推理失败: ' + (e as Error).message
+  } finally {
+    inferring.value = false
   }
-
-  const result = await runInference(file)
-  detections.value = result.detections
-  inferenceTimeMs.value = result.inference_time_ms
 }
 </script>

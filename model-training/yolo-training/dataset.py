@@ -146,7 +146,10 @@ def convert_voc_to_yolo(
         root = tree.getroot()
 
         # 找对应图片
-        filename = root.find("filename").text
+        fn_el = root.find("filename")
+        if fn_el is None:
+            continue
+        filename = fn_el.text
         img_path = image_dir / filename
         if not img_path.exists():
             # 尝试常见扩展名
@@ -166,15 +169,24 @@ def convert_voc_to_yolo(
         # 转 bbox
         labels = []
         for obj in root.findall("object"):
-            cls_name = obj.find("name").text
+            name_el = obj.find("name")
+            if name_el is None:
+                continue
+            cls_name = name_el.text
             if cls_name not in class_map:
                 continue
             cls_id = class_map[cls_name]
             bndbox = obj.find("bndbox")
-            x1 = float(bndbox.find("xmin").text)
-            y1 = float(bndbox.find("ymin").text)
-            x2 = float(bndbox.find("xmax").text)
-            y2 = float(bndbox.find("ymax").text)
+            if bndbox is None:
+                continue
+            x1_el, y1_el = bndbox.find("xmin"), bndbox.find("ymin")
+            x2_el, y2_el = bndbox.find("xmax"), bndbox.find("ymax")
+            if None in (x1_el, y1_el, x2_el, y2_el):
+                continue
+            x1 = float(x1_el.text)
+            y1 = float(y1_el.text)
+            x2 = float(x2_el.text)
+            y2 = float(y2_el.text)
             # 转 YOLO 格式
             cx = ((x1 + x2) / 2) / w
             cy = ((y1 + y2) / 2) / h
@@ -208,7 +220,7 @@ def generate_data_yaml(
     """
     yaml_path = Path(output_path)
     data = {
-        "path": str(yaml_path.parent.absolute()),
+        "path": ".",  # 相对路径，方便跨机器共享
         "train": train_img_dir,
         "val": val_img_dir,
         "nc": len(class_names),

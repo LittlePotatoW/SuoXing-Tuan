@@ -25,6 +25,6 @@ defineEmits<{
   disconnect: []
 }>()
 
-const localHost = ref('192.168.1.100')
+const localHost = ref('localhost')
 const localPort = ref(8000)
 </script>

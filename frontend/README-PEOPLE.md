@@ -18,7 +18,7 @@
 
 `src/` 里面按照 Vue 3 的惯例组织：
 - `components/` — 放 UI 组件（按钮、面板等）
-- `composables/` — 放可复用的逻辑（比如 WebSocket 连接）
+- `composables/` — 放可复用的逻辑（比如 API 请求封装）
 - `stores/` — 放全局状态（Pinia 状态管理）
 - 等等（开发时再具体建）
 
@@ -33,7 +33,7 @@
 | **Pinia** | Vue 3 官方状态管理 | https://pinia.vuejs.org/zh/ |
 | **Vue Router** | 前端路由（页面跳转） | https://router.vuejs.org/zh/ |
 | **Three.js** | 三维渲染库（WebGL 封装） | https://threejs.org/docs/ |
-| **WebSocket** | 跟后端实时通信 | MDN：https://developer.mozilla.org/zh-CN/docs/Web/API/WebSocket |
+
 
 ## 怎么学？（推荐学习路线）
 

@@ -1,0 +1,30 @@
+# ============================================================
+# model-training/yolo-training/requirements.txt
+# 模型训练依赖
+#
+# 用法:
+#   pip install -r requirements.txt
+# ============================================================
+
+# 核心训练框架
+ultralytics~=8.4.0
+
+# PyTorch (含 CUDA 支持，根据系统选择安装)
+# CPU 版本: pip install torch~=2.0.0
+# CUDA 12.x 版本: pip install torch~=2.0.0 --index-url https://download.pytorch.org/whl/cu121
+torch~=2.0.0
+
+# 数据处理
+numpy~=1.26.0
+pandas~=2.0.0
+opencv-python~=4.9.0
+
+# 可视化与进度
+matplotlib~=3.7.0
+tqdm~=4.65.0
+
+# 配置文件
+PyYAML~=6.0
+
+# Jupyter Notebook (可选，运行 train.ipynb)
+ipython~=8.0.0

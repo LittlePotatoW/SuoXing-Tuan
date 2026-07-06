@@ -1,6 +1,6 @@
 <!-- ============================================================ -->
 <!-- frontend/src/components/ImageViewer.vue                         -->
-<!-- 图像显示 — Canvas 渲染图像 + 检测框叠加，纯展示                  -->
+<!-- 图像显示 — Canvas 渲染图像 + 检测框叠加                          -->
 <!-- ============================================================ -->
 
 <template>
@@ -8,7 +8,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch, onMounted } from 'vue'
+import { ref, watch, onMounted, onUnmounted } from 'vue'
 import { DETECTION_COLORS } from '../constants/colors'
 
 const props = defineProps<{
@@ -17,6 +17,8 @@ const props = defineProps<{
 }>()
 
 const canvasRef = ref<HTMLCanvasElement | null>(null)
+let rafId = 0
+let currentSrc = ''
 
 function getColor(className: string) {
   return DETECTION_COLORS[className] ?? DETECTION_COLORS.default
@@ -25,11 +27,22 @@ function getColor(className: string) {
 function draw() {
   const canvas = canvasRef.value
   if (!canvas) return
+
   const img = new Image()
+  const src = props.imageSrc
+  currentSrc = src
+
   img.onload = () => {
-    canvas.width = img.naturalWidth
-    canvas.height = img.naturalHeight
+    if (props.imageSrc !== currentSrc) return  // 防竞态
+
+    const dpr = window.devicePixelRatio || 1
+    canvas.width = img.naturalWidth * dpr
+    canvas.height = img.naturalHeight * dpr
+    canvas.style.width = img.naturalWidth + 'px'
+    canvas.style.height = img.naturalHeight + 'px'
+
     const ctx = canvas.getContext('2d')!
+    ctx.scale(dpr, dpr)
     ctx.drawImage(img, 0, 0)
 
     for (const d of props.detections) {
@@ -43,15 +56,29 @@ function draw() {
       const label = `${d.class_name} ${(d.confidence * 100).toFixed(0)}%`
       ctx.font = '14px monospace'
       const tw = ctx.measureText(label).width
+      const labelH = 20
+      const labelY = y1 < labelH ? y1 + labelH : y1  // 顶部溢出时画在框内
+
       ctx.fillStyle = color
-      ctx.fillRect(x1, y1 - 20, tw + 8, 20)
+      ctx.fillRect(x1, labelY - labelH, tw + 8, labelH)
       ctx.fillStyle = '#fff'
-      ctx.fillText(label, x1 + 4, y1 - 6)
+      ctx.fillText(label, x1 + 4, labelY - 6)
     }
   }
-  img.src = props.imageSrc
+
+  img.onerror = () => {
+    console.warn('ImageViewer: failed to load image')
+  }
+
+  img.src = src
 }
 
 onMounted(draw)
-watch(() => [props.imageSrc, props.detections], draw, { deep: true })
+
+watch(() => [props.imageSrc, props.detections], () => {
+  cancelAnimationFrame(rafId)
+  rafId = requestAnimationFrame(draw)
+})
+
+onUnmounted(() => cancelAnimationFrame(rafId))
 </script>

@@ -12,12 +12,15 @@
 #   results = engine.infer(image_array)
 # ============================================================
 
+import gc
 import time
-import numpy as np
+import logging
+import threading
 from pathlib import Path
 from dataclasses import dataclass, field
 from typing import Optional
-import logging
+
+import numpy as np
 
 logger = logging.getLogger("inference")
 
@@ -42,10 +45,11 @@ class InferenceResponse:
 class InferenceEngine:
     """
     YOLO 推理引擎。
-    所有模型推理都走这个类，前端不参与推理。
+    线程安全：load/infer 通过锁串行化，避免并发读写半初始化状态。
     """
 
     def __init__(self):
+        self._lock = threading.RLock()
         self._model = None
         self._model_path: str = ""
         self._model_name: str = ""
@@ -68,58 +72,73 @@ class InferenceEngine:
     # ==================== 模型加载 ====================
 
     def load(self, model_path: str, conf: float = 0.3, iou: float = 0.5) -> None:
-        """
-        加载模型（拔插式：如果已加载则先卸载旧模型）。
-        支持 .pt / .onnx / .engine
-        """
         from ultralytics import YOLO
-
-        if self._model is not None:
-            self.unload()
 
         self._conf = conf
         self._iou = iou
 
         logger.info("Loading model: %s", model_path)
-        self._model = YOLO(model_path)
-        self._model_path = str(model_path)
-        self._model_name = Path(model_path).stem
 
-        # 读取类别名
-        if hasattr(self._model, "names"):
-            self._class_names = list(self._model.names.values())
+        # 先加载新模型，再替换旧的，避免加载失败留下半初始化状态
+        new_model = YOLO(model_path)
 
-        # 预热
-        dummy = np.zeros((640, 640, 3), dtype=np.uint8)
-        self._model(dummy, conf=conf, iou=iou, verbose=False)
+        with self._lock:
+            # 卸载旧模型
+            if self._model is not None:
+                del self._model
+                self._model = None
+                self._class_names = []
+                self._model_path = ""
+                self._model_name = ""
+                if self._has_cuda():
+                    import torch
+                    torch.cuda.empty_cache()
+                gc.collect()
+
+            self._model = new_model
+            self._model_path = str(model_path)
+            self._model_name = Path(model_path).stem
+
+            # 读取类别名
+            if hasattr(self._model, "names"):
+                self._class_names = list(self._model.names.values())
+
+            # 从模型读取实际输入尺寸做预热
+            imgsz = 640
+            if hasattr(self._model, "model") and hasattr(self._model.model, "args"):
+                imgsz = self._model.model.args.get("imgsz", 640)
+                if isinstance(imgsz, (list, tuple)):
+                    imgsz = imgsz[0]
+
+            dummy = np.zeros((imgsz, imgsz, 3), dtype=np.uint8)
+            self._model(dummy, conf=conf, iou=iou, verbose=False)
 
         logger.info("Model ready: %s (%d classes)", self._model_name, len(self._class_names))
 
     def unload(self) -> None:
-        """卸载模型释放显存"""
-        if self._model is not None:
-            del self._model
-            self._model = None
-            self._class_names = []
-            logger.info("Model unloaded")
+        with self._lock:
+            if self._model is not None:
+                del self._model
+                self._model = None
+                self._class_names = []
+                self._model_path = ""
+                self._model_name = ""
+                if self._has_cuda():
+                    import torch
+                    torch.cuda.empty_cache()
+                gc.collect()
+                logger.info("Model unloaded")
 
     # ==================== 推理 ====================
 
     def infer(self, image: np.ndarray) -> InferenceResponse:
-        """
-        推理单张图像。
-        输入: (H, W, 3) BGR uint8 numpy 数组
-        输出: InferenceResponse
-        """
-        if self._model is None:
-            raise RuntimeError("No model loaded")
-
         h, w = image.shape[:2]
         t0 = time.perf_counter()
 
-        results = self._model(image, conf=self._conf, iou=self._iou, verbose=False)
-
-        elapsed = (time.perf_counter() - t0) * 1000
+        with self._lock:
+            if self._model is None:
+                raise RuntimeError("No model loaded")
+            results = self._model(image, conf=self._conf, iou=self._iou, verbose=False)
 
         detections: list[DetectionResult] = []
         for r in results:
@@ -130,6 +149,13 @@ class InferenceEngine:
                 conf_val = float(r.boxes.conf[i].item())
                 xyxy = r.boxes.xyxy[i].tolist()
 
+                # Clamp to image bounds
+                x1, y1, x2, y2 = xyxy
+                x1, y1 = max(0, x1), max(0, y1)
+                x2, y2 = min(w, x2), min(h, y2)
+                if x2 <= x1 or y2 <= y1:
+                    continue
+
                 class_name = (
                     self._class_names[cls_id]
                     if cls_id < len(self._class_names)
@@ -138,14 +164,22 @@ class InferenceEngine:
 
                 detections.append(DetectionResult(
                     class_name=class_name,
-                    confidence=round(conf_val, 4),
-                    bbox=[round(v, 2) for v in xyxy],
+                    confidence=conf_val,
+                    bbox=[round(x1, 2), round(y1, 2), round(x2, 2), round(y2, 2)],
                 ))
 
-        logger.debug("%d detections in %.1fms", len(detections), elapsed)
+        elapsed = (time.perf_counter() - t0) * 1000
         return InferenceResponse(
             detections=detections,
             inference_time_ms=round(elapsed, 1),
             image_width=w,
             image_height=h,
         )
+
+    @staticmethod
+    def _has_cuda() -> bool:
+        try:
+            import torch
+            return torch.cuda.is_available()
+        except Exception:
+            return False

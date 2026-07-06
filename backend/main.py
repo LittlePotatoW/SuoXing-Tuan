@@ -10,25 +10,38 @@
 #
 # 用法:
 #   python main.py
-#   uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+#   uvicorn main:app --host 127.0.0.1 --port 8000
 # ============================================================
 
+import os
+import json
+import asyncio
 import logging
 import shutil
 from io import BytesIO
 from pathlib import Path
+from uuid import uuid4
 
 import numpy as np
 from PIL import Image
-from fastapi import FastAPI, APIRouter, UploadFile, File, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Request, UploadFile, File, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
 from inference import InferenceEngine, InferenceResponse, DetectionResult
 
+# ==================== 配置 ====================
+
+LOG_LEVEL = os.getenv("SX_LOG_LEVEL", "INFO")
+HOST = os.getenv("SX_HOST", "127.0.0.1")
+PORT = int(os.getenv("SX_PORT", "8000"))
+MAX_IMAGE_MB = int(os.getenv("SX_MAX_IMAGE_MB", "50"))
+MAX_MODEL_MB = int(os.getenv("SX_MAX_MODEL_MB", "200"))
+DEFAULT_MODEL = os.getenv("SX_DEFAULT_MODEL", "crack-detector.pt")
+
 # ==================== 日志 ====================
 
 logging.basicConfig(
-    level=logging.DEBUG,
+    level=getattr(logging, LOG_LEVEL.upper(), logging.INFO),
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     datefmt="%H:%M:%S",
 )
@@ -40,6 +53,12 @@ engine = InferenceEngine()
 MODEL_DIR = Path(__file__).resolve().parent / "models"
 MODEL_DIR.mkdir(exist_ok=True)
 
+# 启动时自动加载默认模型
+_default_model = MODEL_DIR / DEFAULT_MODEL
+if _default_model.exists():
+    engine.load(str(_default_model))
+    logger.info("Auto-loaded default model: %s", _default_model.name)
+
 # ==================== FastAPI 应用 ====================
 
 app = FastAPI(
@@ -50,16 +69,27 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
+    allow_origins=os.getenv("SX_CORS_ORIGINS", "http://localhost:5173,http://localhost:5174").split(","),
+    allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )
+
+
+# ==================== 请求追踪中间件 ====================
+
+@app.middleware("http")
+async def add_request_id(request: Request, call_next):
+    request_id = request.headers.get("X-Request-ID", str(uuid4())[:8])
+    logger.debug("[%s] %s %s", request_id, request.method, request.url.path)
+    response = await call_next(request)
+    response.headers["X-Request-ID"] = request_id
+    return response
+
 
 # ==================== REST API ====================
 
 @app.get("/api/health")
 async def health():
-    """健康检查 — 前端用此检测后端是否在线"""
     return {
         "status": "ok",
         "model_loaded": engine.loaded,
@@ -69,100 +99,112 @@ async def health():
 
 @app.post("/api/inference", response_model=InferenceResponse)
 async def inference(image: UploadFile = File(...)):
-    """
-    上传图片进行推理。
-    前端发图片 → 后端推理 → 返回检测结果。
-    前端不参与推理计算。
-    """
-    if image.content_type and not image.content_type.startswith("image/"):
-        raise HTTPException(400, "Only image files are accepted")
-
     if not engine.loaded:
-        raise HTTPException(503, "No model loaded. Upload a .pt file via /api/model/load first.")
+        raise HTTPException(503, "No model loaded")
+
+    # 读取图片（限制大小）
+    contents = b""
+    chunk_size = 1024 * 1024
+    max_bytes = MAX_IMAGE_MB * 1024 * 1024
+    while True:
+        chunk = await image.read(chunk_size)
+        if not chunk:
+            break
+        contents += chunk
+        if len(contents) > max_bytes:
+            raise HTTPException(413, f"Image too large (max {MAX_IMAGE_MB} MB)")
 
     try:
-        # 读取图片
-        contents = await image.read()
         pil_img = Image.open(BytesIO(contents)).convert("RGB")
-        img_array = np.array(pil_img)  # (H, W, 3) RGB
-        img_array = img_array[:, :, ::-1]  # RGB → BGR
+    except Exception:
+        raise HTTPException(400, "Invalid or corrupt image file")
 
-        # 推理
-        result = engine.infer(img_array)
-        logger.info("Inference: %d detections in %.1fms", len(result.detections), result.inference_time_ms)
+    img_array = np.array(pil_img)  # (H, W, 3) RGB
+    h, w = img_array.shape[:2]
+    if h < 16 or w < 16 or h > 8192 or w > 8192:
+        raise HTTPException(400, f"Image dimensions {w}x{h} out of range [16, 8192]")
+
+    try:
+        loop = asyncio.get_running_loop()
+        result = await loop.run_in_executor(None, engine.infer, img_array)
+        logger.info("[inference] %d detections in %.1fms", len(result.detections), result.inference_time_ms)
         return result
-
     except RuntimeError as e:
         raise HTTPException(503, str(e))
     except Exception as e:
         logger.exception("Inference failed")
-        raise HTTPException(500, f"Inference failed: {e}")
+        raise HTTPException(500, "Inference internal error")
 
 
 @app.post("/api/model/load")
 async def model_load(model_file: UploadFile = File(...)):
-    """
-    上传模型文件 → 后端热加载。
-    前端拔插式换模型的核心接口。
-    支持 .pt / .onnx / .engine
-    """
-    filename = model_file.filename or "model.pt"
+    raw_name = model_file.filename or "model.pt"
+    filename = Path(raw_name).name  # 防止路径穿越
     ext = Path(filename).suffix.lower()
     if ext not in (".pt", ".onnx", ".engine"):
         raise HTTPException(400, f"Unsupported format: {ext}. Use .pt, .onnx, or .engine")
 
+    # 分块写入 + 大小限制
     try:
-        # 保存到 models/ 目录
         dest = MODEL_DIR / filename
+        max_bytes = MAX_MODEL_MB * 1024 * 1024
+        total = 0
         with open(dest, "wb") as f:
-            shutil.copyfileobj(model_file.file, f)
+            while chunk := await model_file.read(1024 * 1024):
+                total += len(chunk)
+                if total > max_bytes:
+                    f.close()
+                    dest.unlink(missing_ok=True)
+                    raise HTTPException(413, f"Model too large (max {MAX_MODEL_MB} MB)")
+                f.write(chunk)
 
         logger.info("Model saved: %s (%d bytes)", dest, dest.stat().st_size)
 
-        # 热加载
-        engine.load(str(dest))
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, engine.load, str(dest))
 
         return {
             "status": "loaded",
             "model_name": engine.model_name,
             "model_path": engine.model_path,
         }
+    except HTTPException:
+        raise
     except Exception as e:
         logger.exception("Model load failed")
+        if dest.exists():
+            dest.unlink(missing_ok=True)
         raise HTTPException(500, f"Model load failed: {e}")
 
 
 # ==================== WebSocket ====================
 
 ws_clients: list[WebSocket] = []
+ws_lock = asyncio.Lock()
 
 
 @app.websocket("/ws/realtime")
 async def ws_realtime(ws: WebSocket):
-    """
-    WebSocket 实时通信。
-    前端连接后可接收后端主动推送的检测结果和图像帧。
-    """
     await ws.accept()
-    ws_clients.append(ws)
-    logger.info("WS client connected (%d total)", len(ws_clients))
+
+    async with ws_lock:
+        ws_clients.append(ws)
+        total = len(ws_clients)
+    logger.info("WS client connected (%d total)", total)
 
     await ws.send_json({"type": "status", "message": "Connected to SuoXing-Tuan backend"})
 
     try:
         while True:
             data = await ws.receive_text()
-            import json
             try:
                 msg = json.loads(data)
                 msg_type = msg.get("type", "")
 
                 if msg_type == "switch_model":
-                    # 前端请求切换模型（后端已有多个模型时）
-                    model_name = msg.get("model_name", "")
                     await ws.send_json({
                         "type": "status",
-                        "message": f"Model switch not supported yet. Use POST /api/model/load.",
+                        "message": "Model switch not supported yet. Use POST /api/model/load.",
                     })
                 else:
                     await ws.send_json({
@@ -173,13 +215,16 @@ async def ws_realtime(ws: WebSocket):
                 pass
 
     except WebSocketDisconnect:
-        ws_clients.remove(ws)
-        logger.info("WS client disconnected (%d total)", len(ws_clients))
+        async with ws_lock:
+            if ws in ws_clients:
+                ws_clients.remove(ws)
+            total = len(ws_clients)
+        logger.info("WS client disconnected (%d total)", total)
 
 
 # ==================== 启动 ====================
 
 if __name__ == "__main__":
     import uvicorn
-    logger.info("Starting SuoXing-Tuan backend...")
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+    logger.info("Starting SuoXing-Tuan backend on %s:%s", HOST, PORT)
+    uvicorn.run("main:app", host=HOST, port=PORT, reload=False)

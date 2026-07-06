@@ -34,7 +34,11 @@ import { ref } from 'vue'
 import ImageViewer from './ImageViewer.vue'
 import { DROPZONE_BG, DROPZONE_BG_HOVER, DROPZONE_BORDER, DROPZONE_BORDER_HOVER } from '../constants/colors'
 
-defineProps<{ connected: boolean; imageSrc: string | null; detections: any[] }>()
+defineProps<{
+  connected: boolean
+  imageSrc: string | null
+  detections: { class_name: string; confidence: number; bbox: number[] }[]
+}>()
 const emit = defineEmits<{ fileDropped: [file: File] }>()
 
 const fileInput = ref<HTMLInputElement | null>(null)
