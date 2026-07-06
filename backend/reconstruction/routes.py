@@ -22,8 +22,8 @@ from typing import Optional
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
-from common.schemas import SensorFrame
-from pipeline.fusion import DataFusion
+from reconstruction.schemas import SensorFrame
+from reconstruction.fusion import DataFusion
 from reconstruction.engine import ReconstructionEngine
 
 logger = logging.getLogger("reconstruction.routes")

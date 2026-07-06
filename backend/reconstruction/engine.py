@@ -38,7 +38,7 @@ import time
 
 import numpy as np
 
-from common.schemas import (
+from reconstruction.schemas import (
     FusedFrame, ReconstructionResult, MeshData, CrackAnnotation, Vector3,
 )
 

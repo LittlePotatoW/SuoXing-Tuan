@@ -1,7 +1,7 @@
 """
 V2 数据模型 — 三维重建管线的全部数据结构。
 
-坐标系说明：详见 common/transform.py 顶部的注释。
+坐标系说明：详见 reconstruction/transform.py 顶部的注释。
 """
 
 import time
@@ -100,7 +100,7 @@ class SensorFrame(BaseModel):
     timestamp_ns: int = Field(default_factory=lambda: time.time_ns())
 
     point_cloud: Optional[PointCloudData] = None
-    camera_views: list[CameraView] = Field(default_factory=list)  # 两个相机
+    camera_views: list[CameraView] = Field(default_factory=list)  # 1个工业相机（可扩展多个）
     car_position: Optional[CarPosition] = None
     kinematics: Optional[KinematicsData] = None
 

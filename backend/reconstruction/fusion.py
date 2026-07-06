@@ -17,10 +17,10 @@
 import logging
 import numpy as np
 
-from common.schemas import SensorFrame, FusedFrame, Pose6DoF, Vector3, Quaternion
-from common.transform import sensor_to_world, camera_to_world
+from reconstruction.schemas import SensorFrame, FusedFrame, Pose6DoF, Vector3, Quaternion
+from reconstruction.transform import sensor_to_world, camera_to_world
 
-logger = logging.getLogger("pipeline.fusion")
+logger = logging.getLogger("reconstruction.fusion")
 
 
 class DataFusion:
