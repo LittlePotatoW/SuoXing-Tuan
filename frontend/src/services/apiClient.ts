@@ -3,7 +3,7 @@
 // 后端 REST API 客户端 — 推理请求、模型上传、健康检查
 // ============================================================
 
-let baseUrl = ''
+let baseUrl = 'http://localhost:8000'
 
 export function setHost(host: string, port: number) {
   baseUrl = `http://${host}:${port}`

@@ -17,6 +17,29 @@ from pathlib import Path
 from ultralytics import YOLO
 
 
+def predict_image(model: YOLO, image_path: str, conf: float = 0.3, iou: float = 0.5,
+                  imgsz: int = 640, save: bool = False, save_json: bool = False) -> list:
+    """对单张图片做推理, 返回检测结果列表 (供 notebook 调用)"""
+    class_names = list(model.names.values()) if hasattr(model, "names") else []
+
+    results = model.predict(source=image_path, conf=conf, iou=iou, imgsz=imgsz,
+                            save=save, verbose=False)
+    detections = []
+    for result in results:
+        boxes = result.boxes
+        if boxes is None:
+            continue
+        for i in range(len(boxes)):
+            cls_id = int(boxes.cls[i].item())
+            detections.append({
+                "class": class_names[cls_id] if cls_id < len(class_names) else f"class_{cls_id}",
+                "class_id": cls_id,
+                "confidence": round(float(boxes.conf[i].item()), 4),
+                "bbox": [round(v, 1) for v in boxes.xyxy[i].tolist()],
+            })
+    return detections
+
+
 def main():
     parser = argparse.ArgumentParser(description="YOLOv8 隧道缺陷检测推理")
     parser.add_argument("--model", default="runs/detect/tunnel-det/weights/best.pt",
@@ -61,7 +84,8 @@ def main():
 
     all_detections = {}
     total = 0
-    for r, img_path in zip(results, [source] if args.image else [str(Path(p)) for p in sorted(Path(source).glob("*")) if p.suffix.lower() in (".jpg", ".jpeg", ".png", ".bmp")]):
+    for r in results:
+        img_path = getattr(r, "path", "unknown")
         dets = []
         if r.boxes:
             for i in range(len(r.boxes)):

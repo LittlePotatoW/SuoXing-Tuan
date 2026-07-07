@@ -19,6 +19,9 @@ REBUILD_INTERVAL_FRAMES = 10
 # 全局点云最大点数。超过后自动降采样减半，防止内存溢出。
 MAX_POINTS = 2_000_000
 
+# 相机轨迹最大保留点数，防内存泄漏
+MAX_TRAIL_POINTS = 10_000
+
 # Poisson 重建深度 (6~10)。越高越精细但计算量指数增长。
 POISSON_DEPTH = 8
 
@@ -35,6 +38,7 @@ DENSITY_FILTER_PERCENTILE = 0.10
 
 import logging
 import time
+import threading
 
 import numpy as np
 
@@ -62,6 +66,7 @@ class ReconstructionEngine:
         self.max_points = max_points
 
         # 内部状态
+        self._lock = threading.RLock()
         self._point_blocks: list[np.ndarray] = []    # 累积的点云块
         self._camera_trail: list[list[float]] = []   # 相机轨迹 [[x,y,z], ...]
         self._frame_count: int = 0
@@ -81,40 +86,48 @@ class ReconstructionEngine:
             return
 
         pts = np.array(frame.points_world, dtype=np.float64).reshape(-1, 3)
-        self._point_blocks.append(pts)
-        self._total_points += pts.shape[0]
-        self._frame_count += 1
 
-        for cam in frame.cameras_world:
-            self._camera_trail.append([cam.position.x, cam.position.y, cam.position.z])
+        with self._lock:
+            self._point_blocks.append(pts)
+            self._total_points += pts.shape[0]
+            self._frame_count += 1
 
-        if self._total_points > self.max_points:
+            for cam in frame.cameras_world:
+                self._camera_trail.append([cam.position.x, cam.position.y, cam.position.z])
+                if len(self._camera_trail) > MAX_TRAIL_POINTS:
+                    self._camera_trail = self._camera_trail[-MAX_TRAIL_POINTS // 2:]
+
+            need_rebuild = self._total_points > self.max_points
+            rebuild_triggered = self._frame_count - self._last_rebuild_at_frame >= self.rebuild_interval_frames
+
+        if need_rebuild:
             self._compact_points()
-
-        if self._frame_count - self._last_rebuild_at_frame >= self.rebuild_interval_frames:
+        if rebuild_triggered:
             self._rebuild()
 
     def add_crack(self, x: float, y: float, z: float,
                   confidence: float = 1.0, crack_type: str = "",
                   frame_id: str = "") -> None:
         """添加裂缝的 3D 标注。"""
-        self._cracks.append(CrackAnnotation(
-            position=Vector3(x=x, y=y, z=z),
-            confidence=confidence,
-            crack_type=crack_type,
-            image_frame_id=frame_id,
-        ))
+        with self._lock:
+            self._cracks.append(CrackAnnotation(
+                position=Vector3(x=x, y=y, z=z),
+                confidence=confidence,
+                crack_type=crack_type,
+                image_frame_id=frame_id,
+            ))
 
     def get_result(self) -> ReconstructionResult:
         """返回当前最新重建结果。"""
-        return ReconstructionResult(
-            status=self._status,
-            mesh=self._latest_mesh or MeshData(),
-            cracks=self._cracks,
-            camera_trail=self._camera_trail,
-            total_frames=self._frame_count,
-            total_points=self._total_points,
-        )
+        with self._lock:
+            return ReconstructionResult(
+                status=self._status,
+                mesh=self._latest_mesh or MeshData(),
+                cracks=list(self._cracks),
+                camera_trail=list(self._camera_trail),
+                total_frames=self._frame_count,
+                total_points=self._total_points,
+            )
 
     @property
     def frame_count(self) -> int:
@@ -126,40 +139,44 @@ class ReconstructionEngine:
 
     def _rebuild(self) -> None:
         """合并 → 降采样 → 去飞点 → 法线 → Poisson → 去伪面"""
-        self._status = "running"
-        t0 = time.perf_counter()
-
-        try:
+        with self._lock:
             if not self._point_blocks:
                 self._status = "accumulating"
                 return
+            self._status = "running"
+            blocks = list(self._point_blocks)
+            frame_count = self._frame_count
 
-            merged = np.vstack(self._point_blocks)
-            logger.info("Rebuild #%d: %d points", self._frame_count, merged.shape[0])
-
+        t0 = time.perf_counter()
+        try:
+            merged = np.vstack(blocks)
+            logger.info("Rebuild #%d: %d points", frame_count, merged.shape[0])
             mesh = self._reconstruct_surface(merged)
 
-            if mesh is not None:
-                verts = np.asarray(mesh.vertices)
-                faces = np.asarray(mesh.triangles)
-                self._latest_mesh = MeshData(
-                    vertices=verts.ravel().tolist(),
-                    faces=faces.ravel().tolist(),
-                    vertex_count=verts.shape[0],
-                    face_count=faces.shape[0],
-                )
-
-            self._status = "completed"
-            self._last_rebuild_at_frame = self._frame_count
+            with self._lock:
+                if mesh is not None:
+                    verts = np.asarray(mesh.vertices)
+                    faces = np.asarray(mesh.triangles)
+                    self._latest_mesh = MeshData(
+                        vertices=verts.ravel().tolist(),
+                        faces=faces.ravel().tolist(),
+                        vertex_count=verts.shape[0],
+                        face_count=faces.shape[0],
+                    )
+                self._status = "completed"
+                self._last_rebuild_at_frame = frame_count
+                v = self._latest_mesh.vertex_count if self._latest_mesh else 0
+                f = self._latest_mesh.face_count if self._latest_mesh else 0
 
         except Exception as e:
             logger.error("Rebuild failed: %s", e, exc_info=True)
-            self._status = "error"
+            with self._lock:
+                self._status = "error"
 
         elapsed = (time.perf_counter() - t0) * 1000
-        v = self._latest_mesh.vertex_count if self._latest_mesh else 0
-        f = self._latest_mesh.face_count if self._latest_mesh else 0
-        logger.info("Rebuild done: %d verts, %d faces, %.0fms", v, f, elapsed)
+        logger.info("Rebuild done: %d verts, %d faces, %.0fms",
+                     self._latest_mesh.vertex_count if self._latest_mesh else 0,
+                     self._latest_mesh.face_count if self._latest_mesh else 0, elapsed)
 
     def _reconstruct_surface(self, points: np.ndarray):
         """核心: 点云 → 三角网格。"""

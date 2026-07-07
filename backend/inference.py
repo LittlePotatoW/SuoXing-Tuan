@@ -79,11 +79,8 @@ class InferenceEngine:
 
         logger.info("Loading model: %s", model_path)
 
-        # 先加载新模型，再替换旧的，避免加载失败留下半初始化状态
-        new_model = YOLO(model_path)
-
         with self._lock:
-            # 卸载旧模型
+            # 卸载旧模型（先删再建，失败也会清理干净）
             if self._model is not None:
                 del self._model
                 self._model = None
@@ -95,6 +92,7 @@ class InferenceEngine:
                     torch.cuda.empty_cache()
                 gc.collect()
 
+            new_model = YOLO(model_path)
             self._model = new_model
             self._model_path = str(model_path)
             self._model_name = Path(model_path).stem

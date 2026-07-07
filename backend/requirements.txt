@@ -15,3 +15,12 @@ numpy>=1.26.0
 Pillow>=10.0.0
 PyYAML>=6.0
 open3d>=0.18.0
+
+# ============================================================
+# PyTorch (nightly, CUDA 12.8, RTX 5060 / SM120)
+# 安装命令:
+#   pip install --pre torch torchvision --index-url https://download.pytorch.org/whl/nightly/cu128
+# 当前版本: torch 2.12.0.dev+cu128 / torchvision 0.27.0.dev+cu128
+# ============================================================
+torch
+torchvision
