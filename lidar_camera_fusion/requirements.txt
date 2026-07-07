@@ -1,0 +1,12 @@
+# ============================================================
+# lidar_camera_fusion/requirements.txt
+# LiDAR-Camera Fusion 项目依赖
+#
+# 安装:
+#   pip install -r requirements.txt
+# ============================================================
+
+numpy>=1.26.0
+opencv-python>=4.9.0
+pyyaml>=6.0
+open3d>=0.18.0              # 可选 — 用于 .pcd 读取与带颜色点云保存；无此库时自动回退
