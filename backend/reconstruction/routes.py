@@ -5,9 +5,11 @@
 
 import logging
 import asyncio
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
+import numpy as np
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from reconstruction.schemas import SensorFrame
@@ -20,8 +22,45 @@ logger = logging.getLogger("reconstruction.routes")
 # ── 可调参数 ──
 LIDAR_POSE_IN_BODY = [0.0, 0.0, 0.5, 1.0, 0.0, 0.0, 0.0]
 
+# ── 相机内参配置（每个相机一个条目，与 CameraView 顺序对应）──
+# 实际部署时替换为标定值；设空列表则禁用颜色渲染
+CAMERA_INTRINSICS_CONFIG = [
+    {
+        "K": [[600.0, 0.0, 272.0],
+              [0.0, 600.0, 192.0],
+              [0.0, 0.0, 1.0]],
+        "dist_coeff": [0.0, 0.0, 0.0, 0.0, 0.0],  # 无镜头畸变
+        "image_width": 544,
+        "image_height": 384,
+    },
+]
+
+
+@dataclass
+class _CameraIntrinsics:
+    K: np.ndarray
+    dist_coeff: np.ndarray
+    image_width: int
+    image_height: int
+
+
+def _build_intrinsics(config: list[dict]) -> list[_CameraIntrinsics]:
+    result: list[_CameraIntrinsics] = []
+    for cfg in config:
+        result.append(_CameraIntrinsics(
+            K=np.array(cfg["K"], dtype=np.float64),
+            dist_coeff=np.array(cfg["dist_coeff"], dtype=np.float64),
+            image_width=cfg["image_width"],
+            image_height=cfg["image_height"],
+        ))
+    return result
+
+
 # ── 模块级单例 ──
-fusion = DataFusion(sensor_pose_in_body=LIDAR_POSE_IN_BODY)
+fusion = DataFusion(
+    sensor_pose_in_body=LIDAR_POSE_IN_BODY,
+    camera_intrinsics_list=_build_intrinsics(CAMERA_INTRINSICS_CONFIG),
+)
 engine = ReconstructionEngine()
 _loader: Optional[SceneLoader] = None
 _ws_clients: list[WebSocket] = []

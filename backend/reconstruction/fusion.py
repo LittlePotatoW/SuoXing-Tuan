@@ -29,14 +29,18 @@ class DataFusion:
     每收到一个 SensorFrame → 变换坐标 → 输出一个 FusedFrame。
     """
 
-    def __init__(self, sensor_pose_in_body: list[float] | None = None):
+    def __init__(self, sensor_pose_in_body: list[float] | None = None,
+                 camera_intrinsics_list: list | None = None):
         """
         参数:
-          sensor_pose_in_body: 激光雷达在小车上的安装位姿 [x,y,z, qw,qx,qy,qz]
+          sensor_pose_in_body: 激光雷达在小车上的安装位姿 [x,y,z, qw,qx,qy,z]
                                如果为 None，默认为原点（雷达装在车体原点）
+          camera_intrinsics_list: 相机内参列表，每个元素需提供 .K, .dist_coeff,
+                                  .image_width, .image_height。空列表或不传则跳过颜色采样
         """
         # 雷达外参: 雷达在车体坐标系中的位姿
         self.sensor_pose = sensor_pose_in_body or [0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0]
+        self.camera_intrinsics_list = camera_intrinsics_list or []
 
     def process(self, raw: SensorFrame) -> FusedFrame | None:
         """
@@ -88,6 +92,26 @@ class DataFusion:
 
             if cam_view.image_data is not None:
                 images.append(cam_view.image_data)
+            else:
+                images.append(None)  # 保持 images 和 cameras_world 索引对齐
+
+        # ── 颜色采样: 世界系点云反投影到相机图像 ──
+        point_colors: list[int] = []
+        if (
+            self.camera_intrinsics_list
+            and cameras_world
+            and images
+            and len(cameras_world) == len(images) == len(self.camera_intrinsics_list)
+        ):
+            try:
+                from reconstruction.coloring import sample_colors_from_cameras
+                colors_np = sample_colors_from_cameras(
+                    points_world, cameras_world, images, self.camera_intrinsics_list,
+                )
+                if colors_np is not None:
+                    point_colors = colors_np.ravel().tolist()
+            except Exception as exc:
+                logger.warning("Color sampling failed for frame %s: %s", raw.frame_id, exc)
 
         # ── 打包 FusedFrame ──
         fused = FusedFrame(
@@ -97,6 +121,7 @@ class DataFusion:
             point_count=points_world.shape[0],
             cameras_world=cameras_world,
             images=images,
+            point_colors=point_colors,
         )
 
         logger.debug("Frame %s: %d points → world, %d cameras",

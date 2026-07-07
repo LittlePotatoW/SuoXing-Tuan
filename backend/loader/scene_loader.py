@@ -5,8 +5,9 @@
 # 数据文件夹结构:
 #   backend/data/<scene-name>/
 #   ├── pointclouds/         # .ply 文件, 按帧序号
+#   ├── images/              # (可选) .jpg 文件, 与点云帧一一对应
 #   ├── poses.json           # [{frame, x, y, z, qw, qx, qy, qz}, ...]
-#   └── config.json          # (可选) 传感器外参
+#   └── config.json          # (可选) 传感器外参 + 相机内参
 # ============================================================
 
 import json
@@ -18,7 +19,8 @@ from typing import Optional
 import numpy as np
 
 from reconstruction.schemas import (
-    SensorFrame, PointCloudData, CarPosition, Pose6DoF, Vector3, Quaternion,
+    SensorFrame, PointCloudData, CarPosition, CameraView,
+    Pose6DoF, Vector3, Quaternion,
 )
 
 logger = logging.getLogger("loader")
@@ -50,17 +52,21 @@ class SceneLoader:
         if not ply_files:
             raise FileNotFoundError(f"No .ply files found in {pc_dir}")
 
-        # 读取位姿
+        # 读取位姿 + 配置
         poses = self._load_poses()
-        # 可选的外参配置
         self._config = self._load_config()
+
+        # 检测 images/ 目录
+        self._images_dir = self.scene_path / "images"
+        self._has_images = self._images_dir.exists()
 
         self._frames = []
         for i, ply_path in enumerate(ply_files):
             pose = poses[i] if i < len(poses) else {"x": 0, "y": 0, "z": 0, "qw": 1, "qx": 0, "qy": 0, "qz": 0}
-            self._frames.append({"ply_path": ply_path, "pose": pose})
+            self._frames.append({"ply_path": ply_path, "pose": pose, "index": i})
 
-        logger.info("SceneLoader: %d frames found in %s", len(self._frames), self.scene_path.name)
+        logger.info("SceneLoader: %d frames, images=%s, in %s",
+                     len(self._frames), self._has_images, self.scene_path.name)
 
     def _load_poses(self) -> list[dict]:
         pose_file = self.scene_path / "poses.json"
@@ -92,16 +98,46 @@ class SceneLoader:
         return self._running
 
     def load_frame(self, index: int) -> Optional[SensorFrame]:
-        """读取第 index 帧，构造 SensorFrame"""
+        """读取第 index 帧，构造 SensorFrame（含相机图像，如有）"""
         if index < 0 or index >= len(self._frames):
             return None
 
         item = self._frames[index]
         ply_path = item["ply_path"]
         pose = item["pose"]
+        frame_idx = item["index"]
 
         # 读取点云（优先 Open3D，不可用时用纯 Python 解析 ASCII PLY）
         pts = self._read_ply(str(ply_path))
+
+        # 构造相机视图（加载图片）
+        camera_views: list[CameraView] = []
+        if self._has_images:
+            img_path = self._images_dir / f"{frame_idx:06d}.jpg"
+            if img_path.exists():
+                try:
+                    with open(img_path, "rb") as f:
+                        img_data = f.read()
+                    # 从 config 读取相机参数
+                    cam_cfg = self._config.get("camera", {})
+                    cam_pose_cfg = cam_cfg.get("position", [0.0, 0.0, 1.0])
+                    cam_rot_cfg = cam_cfg.get("rotation", [1.0, 0.0, 0.0, 0.0])
+                    camera_views.append(CameraView(
+                        image_data=img_data,
+                        width=cam_cfg.get("width", 544),
+                        height=cam_cfg.get("height", 384),
+                        camera_pose=Pose6DoF(
+                            position=Vector3(
+                                x=cam_pose_cfg[0], y=cam_pose_cfg[1], z=cam_pose_cfg[2],
+                            ),
+                            rotation=Quaternion(
+                                qw=cam_rot_cfg[0], qx=cam_rot_cfg[1],
+                                qy=cam_rot_cfg[2], qz=cam_rot_cfg[3],
+                            ),
+                        ),
+                    ))
+                except Exception as exc:
+                    logger.warning("Failed to load image %s: %s", img_path, exc)
 
         return SensorFrame(
             frame_id=f"frame_{index:06d}",
@@ -118,7 +154,7 @@ class SceneLoader:
                     ),
                 ),
             ),
-            camera_views=[],
+            camera_views=camera_views,
         )
 
     # ── PLY 读取 ──

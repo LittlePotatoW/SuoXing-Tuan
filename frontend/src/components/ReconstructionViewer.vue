@@ -85,7 +85,7 @@ function loop() {
 
 // ── 外部方法 ──
 
-function updateMesh(data: { vertices: number[]; faces: number[]; vertex_count: number; face_count: number } | null) {
+function updateMesh(data: { vertices: number[]; faces: number[]; vertex_count: number; face_count: number; vertex_colors?: number[] } | null) {
   meshGroup.traverse((child) => {
     if (child instanceof THREE.Mesh) {
       child.geometry?.dispose()
@@ -108,8 +108,14 @@ function updateMesh(data: { vertices: number[]; faces: number[]; vertex_count: n
     geo.computeVertexNormals()
   }
 
+  // 顶点颜色
+  if (data.vertex_colors && data.vertex_colors.length === data.vertex_count * 3) {
+    const colors = new Uint8Array(data.vertex_colors)
+    geo.setAttribute('color', new THREE.BufferAttribute(colors, 3, true))
+  }
+
   const mat = new THREE.MeshStandardMaterial({
-    color: 0xd4d4d4,
+    vertexColors: true,
     side: THREE.DoubleSide,
     roughness: 0.6,
     metalness: 0.0,
