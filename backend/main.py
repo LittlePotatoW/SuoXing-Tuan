@@ -28,6 +28,7 @@ from fastapi import FastAPI, Request, UploadFile, File, HTTPException, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 
 from inference import InferenceEngine, InferenceResponse, DetectionResult
+from reconstruction.routes import router as reconstruction_router
 
 # ==================== 配置 ====================
 
@@ -74,6 +75,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(reconstruction_router)
 
 # ==================== 请求追踪中间件 ====================
 
@@ -84,7 +86,6 @@ async def add_request_id(request: Request, call_next):
     response = await call_next(request)
     response.headers["X-Request-ID"] = request_id
     return response
-
 
 # ==================== REST API ====================
 
