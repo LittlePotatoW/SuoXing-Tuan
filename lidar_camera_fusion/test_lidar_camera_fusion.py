@@ -504,8 +504,8 @@ def test_projection_with_distortion():
                    [0.0, 800.0, 480.0],
                    [0.0, 0.0, 1.0]])
 
-    # 正畸变(k1>0)：桶形畸变，边缘点被"拉向"中心
-    # 对于无畸变在 (960, 480) 的点，正畸变后 u 应 < 960
+    # 正畸变(k1>0)：枕形畸变，边缘点被"推离"中心
+    # OpenCV 模型: x' = x * (1 + k1*r² + ...), k1>0 时放大率增大 → u 增大
     dist_pos = np.array([0.5, 0.0, 0.0, 0.0, 0.0])  # k1 > 0
     dist_zero = np.zeros(5)
 
@@ -517,8 +517,8 @@ def test_projection_with_distortion():
                                            dist_pos, 2000, 960)
 
     if len(uv_no) == 1 and len(uv_k1) == 1:
-        # k1 > 0 → 桶形畸变 → 正点被拉向中心 → u 减小
-        check("k1>0 桶形畸变向内拉", uv_k1[0, 0] < uv_no[0, 0],
+        # k1 > 0 → 枕形畸变 → 边缘点被推离中心 → u 增大
+        check("k1>0 枕形畸变向外推", uv_k1[0, 0] > uv_no[0, 0],
               f"no dist u={uv_no[0,0]:.1f}, k1=0.5 u={uv_k1[0,0]:.1f}")
 
 
@@ -668,13 +668,13 @@ def test_full_pipeline_with_temp_config():
     img_path = str(data_dir / "test.jpg")
     cv2.imwrite(img_path, img)
 
-    # 生成临时配置文件
+    # 生成临时配置文件（使用正斜杠避免 Windows 路径中的反斜杠被 YAML 误解析）
     config_content = f"""# 测试用临时配置
 input:
-  pointcloud_path: "{pcd_path}"
-  image_path: "{img_path}"
+  pointcloud_path: "{Path(pcd_path).as_posix()}"
+  image_path: "{Path(img_path).as_posix()}"
 output:
-  result_path: "{str(out_dir / 'result.jpg')}"
+  result_path: "{out_dir.as_posix()}/result.jpg"
   save_colored_pcd: false
 camera:
   image_width: 640
