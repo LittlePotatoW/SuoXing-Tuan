@@ -12,9 +12,10 @@ from typing import Optional
 import numpy as np
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
-from reconstruction.schemas import SensorFrame
+from reconstruction.schemas import SensorFrame, KinematicsData
 from reconstruction.fusion import DataFusion
 from reconstruction.engine import ReconstructionEngine
+from reconstruction.state_estimator import StateEstimator
 from loader.scene_loader import SceneLoader
 
 logger = logging.getLogger("reconstruction.routes")
@@ -62,6 +63,7 @@ fusion = DataFusion(
     camera_intrinsics_list=_build_intrinsics(CAMERA_INTRINSICS_CONFIG),
 )
 engine = ReconstructionEngine()
+estimator = StateEstimator()
 _loader: Optional[SceneLoader] = None
 _ws_clients: list[WebSocket] = []
 
@@ -69,11 +71,70 @@ router = APIRouter(prefix="/api/reconstruction", tags=["reconstruction"])
 
 
 # ============================================================
-# 帧上传 (硬件模式)
+# 运动学参数上传 (Stream 1: 单独传输，高频)
+# ============================================================
+
+@router.post("/kinematics")
+async def upload_kinematics(k: KinematicsData):
+    """硬件组上传运动学参数（与点云/照片分开传）"""
+    state = estimator.update_kinematics(
+        velocity=k.velocity,
+        steering_angle=k.steering_angle,
+        timestamp_ns=k.timestamp_ns,
+    )
+    return {
+        "status": "ok",
+        "x": round(state.x, 4),
+        "y": round(state.y, 4),
+        "yaw": round(state.yaw, 4),
+        "velocity": round(state.velocity, 2),
+        "updates": estimator.stats["updates"],
+        "rejected": estimator.stats["rejected"],
+    }
+
+
+# ============================================================
+# 帧上传 (硬件模式) — Stream 2: 点云+照片
 # ============================================================
 
 @router.post("/frame")
 async def upload_frame(frame: SensorFrame):
+    """
+    硬件组上传一帧点云+照片。
+
+    car_position 处理规则:
+      即使硬件传了 car_position，也不直接使用。
+      只用 car_position 来修正状态估计器。
+      位置一律从估计器查询（计算值）。
+    """
+    import math
+
+    # 1. 如果传了 car_position → 修正估计器，但不直接使用
+    if frame.car_position is not None:
+        cp = frame.car_position.pose
+        yaw = _quat_to_yaw(cp.rotation)
+        estimator.update_position(
+            x=cp.position.x, y=cp.position.y, z=cp.position.z,
+            yaw=yaw, timestamp_ns=frame.timestamp_ns,
+        )
+
+    # 2. 从估计器查询此时的位置（计算值，不用硬件值）
+    state = estimator.get_position(frame.timestamp_ns)
+    if state is None:
+        return {"status": "skipped", "reason": "no state estimate yet — send /kinematics first"}
+
+    # 3. 用估计值覆盖 frame 的 car_position
+    from reconstruction.schemas import CarPosition, Pose6DoF, Vector3, Quaternion
+    half = state.yaw / 2
+    frame.car_position = CarPosition(
+        pose=Pose6DoF(
+            position=Vector3(x=state.x, y=state.y, z=state.z),
+            rotation=Quaternion(qw=math.cos(half), qx=0, qy=0, qz=math.sin(half)),
+        ),
+        timestamp_ns=frame.timestamp_ns,
+    )
+
+    # 4. 正常融合管线
     loop = asyncio.get_running_loop()
 
     def _process():
@@ -93,6 +154,7 @@ async def upload_frame(frame: SensorFrame):
     return {
         "status": "ok",
         "frame_id": frame.frame_id,
+        "position": {"x": round(state.x, 4), "y": round(state.y, 4), "yaw": round(state.yaw, 4)},
         "total_frames": engine.frame_count,
         "rebuild_triggered": result.status == "completed",
     }
@@ -216,6 +278,14 @@ async def ws_reconstruction(ws: WebSocket):
     except WebSocketDisconnect:
         _ws_clients.remove(ws)
         logger.info("Reconstruction WS: client disconnected (%d total)", len(_ws_clients))
+
+
+def _quat_to_yaw(q) -> float:
+    """四元数 → yaw (绕Z轴旋转角)"""
+    import math as _m
+    siny = 2 * (q.qw * q.qz + q.qx * q.qy)
+    cosy = 1 - 2 * (q.qy * q.qy + q.qz * q.qz)
+    return _m.atan2(siny, cosy)
 
 
 async def _broadcast(payload: dict) -> None:
