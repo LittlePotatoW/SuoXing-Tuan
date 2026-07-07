@@ -172,6 +172,82 @@ visualization:
 
 ---
 
+## 与 SuoXing-Tuan 重建管线的联动
+
+本模块可以**独立运行**（从文件读取数据），也可以作为**库**集成到 `backend/reconstruction/` 管线中。
+
+### 架构位置
+
+```
+硬件层                      数据处理层                      AI推理层
+══════                      ══════════                      ═══════
+激光雷达 ─┐                                                 YOLO检测
+          ├─ SensorFrame ─┬─ DataFusion() ─▶ 世界系点云       │
+相机 ────┘                │                         2D bbox │
+                          │                                  │
+                          └─ project_sensor_frame() ◀────────┘
+                              │   ▲
+                              │   │ V3: bbox→3D 映射
+                              ▼   │
+                           投影结果       backproject_bbox_to_3d()
+                           (uv, depth)   (3D 标注位置)
+```
+
+### 两种使用模式
+
+**模式 1：独立模式**（从文件运行）
+```bash
+python main.py --demo
+```
+
+**模式 2：集成模式**（在 reconstruction 管线中调用）
+```python
+from lidar_camera_fusion import (
+    CameraIntrinsics,           # 内参结构（补 schemas.CameraView 之缺）
+    compute_lidar_to_camera_extrinsic,  # 从 Pose6DoF 推算外参
+    project_sensor_frame,       # SensorFrame → 投影
+    project_fused_frame_to_camera,      # FusedFrame → 投影
+    uv_to_depth_map,            # 稀疏投影 → 稠密深度图
+    backproject_pixel_to_3d,    # 像素+深度 → 世界3D点 (V3核心)
+    backproject_bbox_to_3d,     # 2D检测框 → 3D包围盒 (V3核心)
+)
+
+# 1. 定义相机内参（当前 schemas.py 中缺失的部分）
+intrinsics = CameraIntrinsics(
+    K=[[1200, 0, 960], [0, 1200, 540], [0, 0, 1]],
+    image_width=1920, image_height=1080,
+    dist_coeff=[-0.35, 0.12, 0, 0, -0.02],
+)
+
+# 2. 对每个 SensorFrame 执行投影
+lidar_pose = [0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0]  # LiDAR在车体原点
+results = project_sensor_frame(sensor_frame, intrinsics, lidar_pose)
+
+# 3. 获取相机0的投影结果
+cam0 = results[0]  # {"uv": (M,2), "depths": (M,), "proj_mask": (N,), "points_cam": (M,3)}
+
+# 4. V3: 将 YOLO 检测框映射到 3D 空间
+depth_map = uv_to_depth_map(cam0["uv"], cam0["depths"], 1920, 1080)
+bbox_3d = backproject_bbox_to_3d(
+    [x1, y1, x2, y2], depth_map, intrinsics.K,
+    R_cam_to_world, T_cam_to_world,
+)
+# → [center_x, center_y, center_z, width, height, depth_meters]
+```
+
+### 接口对照表
+
+| 本模块函数 | reconstruction 管线中的位置 | 用途 |
+|-----------|---------------------------|------|
+| `quat_to_rotation()` | = `transform.py:quat_to_rotation` | 四元数→矩阵 |
+| `pose_to_matrix()` | = `transform.py:pose_to_matrix` | 位姿→4×4 |
+| `transform_points()` | = `transform.py:transform_points` | 齐次变换 |
+| `compute_lidar_to_camera_extrinsic()` | ✨ 新增，管线中缺失 | 推算 LiDAR→相机外参 |
+| `project_sensor_frame()` | ✨ 新增，管线中缺失 | SensorFrame→投影结果 |
+| `backproject_pixel_to_3d()` | ✨ 新增，V3 刚需 | 2D→3D 映射 |
+
+---
+
 ## 示例输出
 
 运行成功后将看到类似如下输出：

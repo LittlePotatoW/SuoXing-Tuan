@@ -42,6 +42,13 @@ from lidar_camera_fusion import (
     transform_points,
     build_transformation_matrix,
     extrinsic_from_pose6dof,
+    # 桥接函数 — 与 reconstruction 管线联动
+    CameraIntrinsics,
+    compute_lidar_to_camera_extrinsic,
+    points_from_flat_list,
+    uv_to_depth_map,
+    backproject_pixel_to_3d,
+    backproject_bbox_to_3d,
     # 投影核心
     project_points_to_image,
     filter_pointcloud,
@@ -277,6 +284,127 @@ def test_build_extrinsic_quaternion():
     # 应该是绕 Z 轴 90° 的旋转
     expected_R = euler_to_rotation(0.0, 0.0, math.pi / 2)
     check("四元数模式 R=Z90", approx_array(R, expected_R, tol=1e-10))
+
+
+def test_compute_lidar_to_camera_extrinsic():
+    """测试从两个 Pose6DoF 推算 LiDAR→相机外参。"""
+    print("\n── 测试 3h: compute_lidar_to_camera_extrinsic ──")
+
+    # LiDAR 在车体原点，相机在车体前方 0.5m
+    lidar_pose = [0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0]       # 原点
+    cam_pose = [0.5, 0.0, 0.3, 1.0, 0.0, 0.0, 0.0]          # 前 0.5m, 高 0.3m
+
+    R, T = compute_lidar_to_camera_extrinsic(lidar_pose, cam_pose)
+
+    # LiDAR 原点在相机坐标系: [0,0,0] → 相机应看到 LiDAR 在 (-0.5, 0, -0.3)
+    # 即 T 应该 ≈ [-0.5, 0, -0.3]
+    check("T ≈ [-0.5,0,-0.3]", approx_array(T, [-0.5, 0.0, -0.3], tol=1e-10))
+    check("R = I (无旋转)", approx_array(R, np.eye(3), tol=1e-10))
+
+
+def test_camera_intrinsics():
+    """测试 CameraIntrinsics 数据结构。"""
+    print("\n── 测试 3i: CameraIntrinsics ──")
+
+    intrinsics = CameraIntrinsics(
+        K=[[800, 0, 320], [0, 800, 240], [0, 0, 1]],
+        image_width=640, image_height=480,
+    )
+    check("K shape (3,3)", intrinsics.K.shape == (3, 3))
+    check("dist_coeff 默认零", approx_array(intrinsics.dist_coeff, np.zeros(5)))
+    check("image_width", intrinsics.image_width == 640)
+
+    # 自定义畸变
+    i2 = CameraIntrinsics(
+        K=[[1200, 0, 960], [0, 1200, 540], [0, 0, 1]],
+        image_width=1920, image_height=1080,
+        dist_coeff=[-0.3, 0.1, 0, 0, 0],
+    )
+    check("自定义畸变", approx(i2.dist_coeff[0], -0.3))
+
+
+def test_points_from_flat_list():
+    """测试扁平点云列表 → numpy 数组转换。"""
+    print("\n── 测试 3j: points_from_flat_list ──")
+
+    flat = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
+    pts = points_from_flat_list(flat, 2)
+    check("shape=(2,3)", pts.shape == (2, 3))
+    check("第1点 [1,2,3]", approx_array(pts[0], [1, 2, 3]))
+    check("第2点 [4,5,6]", approx_array(pts[1], [4, 5, 6]))
+
+    # 空列表
+    empty = points_from_flat_list([], 0)
+    check("空列表→(0,3)", empty.shape == (0, 3))
+
+
+def test_uv_to_depth_map():
+    """测试稀疏投影 → 稠密深度图转换。"""
+    print("\n── 测试 3k: uv_to_depth_map ──")
+
+    uv = np.array([[100.0, 200.0], [300.0, 400.0], [100.0, 200.0]])
+    depths = np.array([5.0, 10.0, 3.0])  # 第3个与第1个同像素，但更近
+
+    depth_map = uv_to_depth_map(uv, depths, 640, 480)
+
+    check("shape=(480,640)", depth_map.shape == (480, 640))
+    # 同像素取最近值
+    check("重叠像素取最小值", approx(depth_map[200, 100], 3.0))
+    check("孤立像素", approx(depth_map[400, 300], 10.0))
+    check("无投影处为0", approx(depth_map[0, 0], 0.0))
+
+
+def test_backproject_pixel_to_3d():
+    """测试反向投影：像素+深度 → 世界3D点。"""
+    print("\n── 测试 3l: backproject_pixel_to_3d ──")
+
+    K = np.array([[800.0, 0.0, 320.0],
+                   [0.0, 800.0, 240.0],
+                   [0.0, 0.0, 1.0]])
+    R = np.eye(3)
+    T = np.zeros(3)
+
+    # 像素 (320, 240) 即光心，深度 5m → 世界 (0, 0, 5)
+    p3 = backproject_pixel_to_3d(320.0, 240.0, 5.0, K, R, T)
+    check("光心点→(0,0,5)", approx_array(p3, [0.0, 0.0, 5.0], tol=1e-6))
+
+    # 偏移像素: (320+160, 240) = (480, 240), depth=5 → x = (480-320)*5/800 = 1.0
+    p3_offset = backproject_pixel_to_3d(480.0, 240.0, 5.0, K, R, T)
+    check("偏移点→(1,0,5)", approx_array(p3_offset, [1.0, 0.0, 5.0], tol=1e-6))
+
+    # 带旋转: R 绕 Z 90°, 点 (0, 0, 5) → 世界 (0, 0, 5)（Z轴不变）
+    Rz90 = euler_to_rotation(0.0, 0.0, np.pi / 2)
+    p3_rot = backproject_pixel_to_3d(320.0, 240.0, 5.0, K, Rz90, np.zeros(3))
+    # 相机系 (0,0,5) → Rz90 @ [0,0,5] = [0, 0, 5]
+    check("旋转后(0,0,5)不变", approx_array(p3_rot, [0.0, 0.0, 5.0], tol=1e-6))
+
+
+def test_backproject_bbox_to_3d():
+    """测试 2D bbox → 3D 包围盒。"""
+    print("\n── 测试 3m: backproject_bbox_to_3d ──")
+
+    # 构造一个简单的深度图：中心区域深度 = 5m
+    depth_map = np.zeros((480, 640), dtype=np.float64)
+    depth_map[200:280, 280:360] = 5.0  # bbox 中心 80×80 区域
+
+    K = np.array([[800.0, 0.0, 320.0],
+                   [0.0, 800.0, 240.0],
+                   [0.0, 0.0, 1.0]])
+    R = np.eye(3)
+    T = np.zeros(3)
+
+    bbox_3d = backproject_bbox_to_3d([280, 200, 360, 280], depth_map, K, R, T)
+
+    check("返回6个值", len(bbox_3d) == 6)
+    if len(bbox_3d) == 6:
+        check("centerZ≈5", abs(bbox_3d[2] - 5.0) < 0.1,
+              f"got {bbox_3d[2]:.2f}")
+        check("width>0", bbox_3d[3] > 0)
+        check("height>0", bbox_3d[4] > 0)
+
+    # 空 bbox（无有效深度）
+    empty = backproject_bbox_to_3d([0, 0, 10, 10], depth_map, K, R, T)
+    check("无有效深度→空", empty == [])
 
 
 def test_projection_no_distortion():
@@ -628,6 +756,12 @@ def main():
         ("transform_points", test_transform_points_func),
         ("extrinsic_from_pose6dof", test_extrinsic_from_pose6dof),
         ("外参构建 (四元数模式)", test_build_extrinsic_quaternion),
+        ("推算 LiDAR→相机外参", test_compute_lidar_to_camera_extrinsic),
+        ("CameraIntrinsics", test_camera_intrinsics),
+        ("points_from_flat_list", test_points_from_flat_list),
+        ("uv_to_depth_map", test_uv_to_depth_map),
+        ("backproject_pixel_to_3d", test_backproject_pixel_to_3d),
+        ("backproject_bbox_to_3d", test_backproject_bbox_to_3d),
         ("无畸变投影正确性", test_projection_no_distortion),
         ("相机后方点过滤", test_projection_behind_camera),
         ("图像边界裁剪", test_projection_boundary),

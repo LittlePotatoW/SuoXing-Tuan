@@ -17,13 +17,26 @@
 #   4. 3D 点云 → 2D 图像平面投影（相机内参 + 外参）
 #   5. 融合结果可视化（JET 伪彩色 + alpha 混合）
 #
+# ★ V2/V3 桥接（与 reconstruction 管线联动）:
+#   6. CameraIntrinsics — 相机内参数据结构（补 schemas.CameraView 之缺）
+#   7. compute_lidar_to_camera_extrinsic — 从两个 Pose6DoF 推算外参
+#   8. project_sensor_frame / project_fused_frame_to_camera — 管线数据投影
+#   9. backproject_pixel_to_3d / backproject_bbox_to_3d — V3 缺陷标注映射
+#
 # 依赖: numpy, opencv-python, pyyaml, open3d (可选)
 #
 # 用法:
+#   # 独立模式 — 从文件读取
 #   from lidar_camera_fusion import LidarCameraFusion
 #   fusion = LidarCameraFusion("config.yaml")
 #   result = fusion.run()
-#   cv2.imwrite("output.jpg", result)
+#
+#   # 集成模式 — 与 reconstruction 管线联动
+#   from lidar_camera_fusion import (
+#       CameraIntrinsics, project_sensor_frame, backproject_bbox_to_3d,
+#   )
+#   from reconstruction.schemas import SensorFrame
+#   # ...接收 SensorFrame → project_sensor_frame() → 获取投影 uv/depths
 # ============================================================
 
 import os
@@ -320,6 +333,365 @@ def extrinsic_from_pose6dof(
     return R, T
 
 
+def compute_lidar_to_camera_extrinsic(
+    lidar_pose_in_body: list,   # [x, y, z, qw, qx, qy, qz]
+    camera_pose_in_body: list,  # [x, y, z, qw, qx, qy, qz]
+) -> Tuple[np.ndarray, np.ndarray]:
+    """从两个 Pose6DoF 推算 LiDAR → Camera 的外参 (R, T)。
+
+    变换链:
+      P_cam = inv(T_cam_body) @ T_lidar_body @ P_lidar
+
+    即:
+      T_lidar_to_cam = T_body_to_cam @ T_lidar_to_body
+                      = inv(T_cam_to_body) @ T_lidar_to_body
+
+    这是连接 reconstruction 管线与投影模块的关键函数：
+      - lidar_pose_in_body:  激光雷达在小车上的安装位姿 (sensor_pose_in_body)
+      - camera_pose_in_body: 相机在小车上的安装位姿 (CameraView.camera_pose)
+
+    Args:
+        lidar_pose_in_body:  激光雷达在车体系中的位姿 [x,y,z, qw,qx,qy,qz]
+        camera_pose_in_body: 相机在车体系中的位姿 [x,y,z, qw,qx,qy,qz]
+
+    Returns:
+        (R, T): LiDAR→Camera 的旋转矩阵和平移向量
+    """
+    T_lidar_body = pose_to_matrix(lidar_pose_in_body[:3], lidar_pose_in_body[3:])
+    T_cam_body = pose_to_matrix(camera_pose_in_body[:3], camera_pose_in_body[3:])
+
+    # T_body_to_cam = inv(T_cam_to_body)
+    T_body_cam = np.linalg.inv(T_cam_body)
+    T_lidar_cam = T_body_cam @ T_lidar_body
+
+    R = T_lidar_cam[:3, :3]
+    T = T_lidar_cam[:3, 3]
+    return R, T
+
+
+# ---- 2d. CameraIntrinsics — 相机内参数据结构（与 schemas.CameraView 互补） ----
+
+class CameraIntrinsics:
+    """相机内参 + 畸变系数。
+
+    与 backend/reconstruction/schemas.py 的 CameraView 互补：
+      - CameraView 有: width, height, camera_pose (外参)
+      - CameraIntrinsics 有: K, dist_coeff (内参) ← 当前 schemas 中缺失
+
+    两者组合即可完成完整的 LiDAR→Pixel 投影。
+
+    用法:
+      intrinsics = CameraIntrinsics(
+          K=[[800,0,320],[0,800,240],[0,0,1]],
+          image_width=640, image_height=480,
+      )
+    """
+
+    def __init__(
+        self,
+        K: list,                       # 3×3 内参矩阵
+        image_width: int,
+        image_height: int,
+        dist_coeff: list | None = None,  # [k1,k2,p1,p2,k3]，None=无畸变
+    ):
+        self.K = build_intrinsic_matrix(K)
+        self.dist_coeff = (
+            np.array(dist_coeff, dtype=np.float64)
+            if dist_coeff is not None
+            else np.zeros(5, dtype=np.float64)
+        )
+        self.image_width = image_width
+        self.image_height = image_height
+
+        if len(self.dist_coeff) != 5:
+            raise ValueError("dist_coeff 必须包含 5 个参数: [k1, k2, p1, p2, k3]")
+
+
+# ---- 2e. SensorFrame / FusedFrame 桥接 — 直接投影管线数据 ----
+
+def points_from_flat_list(flat: list, point_count: int) -> np.ndarray:
+    """将 SuoXing-Tuan 扁平点云列表转为 (N, 3) numpy 数组。
+
+    PointCloudData.points 格式: [x0, y0, z0, x1, y1, z1, ...]
+    FusedFrame.points_world 格式: 同上
+
+    Args:
+        flat:        扁平 float 列表。
+        point_count: 点数（用于校验）。
+
+    Returns:
+        (N, 3) numpy 数组。
+    """
+    if not flat:
+        return np.empty((0, 3), dtype=np.float64)
+    pts = np.array(flat, dtype=np.float64).reshape(-1, 3)
+    expected = len(flat) // 3
+    if point_count and point_count != expected:
+        raise ValueError(
+            f"point_count={point_count} 与扁平数组长度不匹配 "
+            f"(期望 {expected} 点，共 {len(flat)} 个值)"
+        )
+    return pts
+
+
+def project_sensor_frame(
+    sensor_frame,                     # SensorFrame (Pydantic model)
+    intrinsics: "CameraIntrinsics",
+    lidar_pose_in_body: list | None = None,
+) -> dict:
+    """对一帧 SensorFrame 中的所有相机执行 LiDAR→图像投影。
+
+    这是连接 V2 重建管线与投影可视化的核心桥接函数。
+
+    变换链:
+      P_lidar → [compose T_lidar→cam] → P_cam → [K + dist] → (u, v)
+
+    Args:
+        sensor_frame:       SuoXing-Tuan SensorFrame (含点云 + CameraView 列表)
+        intrinsics:         相机内参（所有相机共用，或按索引传入列表）
+        lidar_pose_in_body: 激光雷达在车体中的安装位姿 [x,y,z, qw,qx,qy,qz]。
+                            若为 None，默认 LiDAR 在车体原点。
+
+    Returns:
+        dict，key 为相机索引，value 为:
+          { "uv": (M,2) 像素坐标, "depths": (M,) 相机系深度,
+            "proj_mask": (N,) 布尔掩码,
+            "points_cam": (M,3) 投影成功的相机系点 }
+        若某相机无有效投影点，对应 value 为 None。
+    """
+    if lidar_pose_in_body is None:
+        lidar_pose_in_body = [0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0]
+
+    # 提取点云
+    pc = sensor_frame.point_cloud
+    if pc is None or pc.point_count == 0:
+        return {}
+
+    points_lidar = points_from_flat_list(pc.points, pc.point_count)
+
+    results = {}
+    for cam_idx, cam_view in enumerate(sensor_frame.camera_views):
+        if cam_view.width == 0 or cam_view.height == 0:
+            results[cam_idx] = None
+            continue
+
+        # 计算 LiDAR → Camera 外参
+        cam_pose_list = [
+            cam_view.camera_pose.position.x,
+            cam_view.camera_pose.position.y,
+            cam_view.camera_pose.position.z,
+            cam_view.camera_pose.rotation.qw,
+            cam_view.camera_pose.rotation.qx,
+            cam_view.camera_pose.rotation.qy,
+            cam_view.camera_pose.rotation.qz,
+        ]
+        R_lidar_to_cam, T_lidar_to_cam = compute_lidar_to_camera_extrinsic(
+            lidar_pose_in_body, cam_pose_list,
+        )
+
+        # 投影
+        uv, depths, proj_mask = project_points_to_image(
+            points_lidar, intrinsics.K, R_lidar_to_cam, T_lidar_to_cam,
+            intrinsics.dist_coeff, intrinsics.image_width, intrinsics.image_height,
+        )
+
+        if len(uv) == 0:
+            results[cam_idx] = None
+            continue
+
+        # 提取投影成功的相机系点云（用于后续 V3 标注映射）
+        points_cam = transform_points(
+            points_lidar[proj_mask],
+            build_transformation_matrix(R_lidar_to_cam, T_lidar_to_cam),
+        )
+
+        results[cam_idx] = {
+            "uv": uv,
+            "depths": depths,
+            "proj_mask": proj_mask,
+            "points_cam": points_cam,
+        }
+
+    return results
+
+
+def project_fused_frame_to_camera(
+    fused_frame,                       # FusedFrame (Pydantic model)
+    intrinsics: "CameraIntrinsics",
+    camera_world_pose: list,           # 相机在世界系中的位姿 [x,y,z, qw,qx,qy,qz]
+) -> dict | None:
+    """将世界坐标系中的融合点云反向投影到指定相机的图像平面。
+
+    用于 V2→V3 过渡：重建完成后，想看看世界空间中的点从某个相机视角
+    看起来是什么样。
+
+    变换链:
+      P_world → [inv(T_cam_world)] → P_cam → [K + dist] → (u, v)
+
+    Args:
+        fused_frame:       SuoXing-Tuan FusedFrame（点云已在世界坐标系）
+        intrinsics:        相机内参
+        camera_world_pose: 相机在世界系中的位姿 [x,y,z, qw,qx,qy,qz]
+
+    Returns:
+        同 project_sensor_frame 的单个相机结果字典，或 None。
+    """
+    if fused_frame.point_count == 0:
+        return None
+
+    points_world = points_from_flat_list(
+        fused_frame.points_world, fused_frame.point_count
+    )
+
+    # 世界 → 相机: T_cam_from_world = inv(T_cam_world)
+    T_cam_world = pose_to_matrix(camera_world_pose[:3], camera_world_pose[3:])
+    T_world_cam = np.linalg.inv(T_cam_world)
+    R_world_to_cam = T_world_cam[:3, :3]
+    T_world_to_cam = T_world_cam[:3, 3]
+
+    uv, depths, proj_mask = project_points_to_image(
+        points_world, intrinsics.K, R_world_to_cam, T_world_to_cam,
+        intrinsics.dist_coeff, intrinsics.image_width, intrinsics.image_height,
+    )
+
+    if len(uv) == 0:
+        return None
+
+    points_cam = transform_points(
+        points_world[proj_mask],
+        T_world_cam,
+    )
+
+    return {
+        "uv": uv,
+        "depths": depths,
+        "proj_mask": proj_mask,
+        "points_cam": points_cam,
+    }
+
+
+# ---- 2f. 反向投影 (2D → 3D) — V3 缺陷标注映射的关键 ----
+
+def backproject_pixel_to_3d(
+    u: float,
+    v: float,
+    depth: float,
+    K: np.ndarray,
+    R_cam_to_world: np.ndarray,
+    T_cam_to_world: np.ndarray,
+    dist_coeff: np.ndarray | None = None,
+) -> np.ndarray:
+    """将 2D 像素点 + 深度值反向投影到 3D 世界坐标系。
+
+    这是 V3 "大模型识别缺陷 → 自动标注到三维场景" 的核心算法：
+      1. 像素坐标 → [去畸变 + 内参逆映射] → 归一化相机坐标
+      2. 归一化坐标 × depth → 相机坐标系 3D 点
+      3. 相机坐标系 → [R, T] → 世界坐标系 3D 点
+
+    步骤 1 使用 OpenCV cv2.undistortPoints 处理畸变。
+
+    Args:
+        u, v:             像素坐标。
+        depth:            该像素对应的深度值 (m)，可来自 LiDAR 投影。
+        K:                (3,3) 相机内参矩阵。
+        R_cam_to_world:   (3,3) 相机→世界的旋转矩阵。
+        T_cam_to_world:   (3,)  相机→世界的平移向量。
+        dist_coeff:       (5,) 畸变系数，None 则视为零畸变。
+
+    Returns:
+        (3,) 世界坐标系中的 3D 点 [x, y, z]。
+    """
+    dist = dist_coeff if dist_coeff is not None else np.zeros(5)
+
+    # 步骤 1: 去畸变 + 归一化坐标
+    pixel_pt = np.array([[[u, v]]], dtype=np.float32)
+    undistorted = cv2.undistortPoints(
+        pixel_pt, K, dist, P=K  # P=K 表示输出仍用原内参映射
+    )
+    x_norm = undistorted[0, 0, 0]  # X_cam / Z_cam
+    y_norm = undistorted[0, 0, 1]  # Y_cam / Z_cam
+
+    # 步骤 2: 归一化坐标 × depth → 相机系 3D
+    P_cam = np.array([x_norm * depth, y_norm * depth, depth])
+
+    # 步骤 3: 相机 → 世界
+    P_world = R_cam_to_world @ P_cam + T_cam_to_world
+
+    return P_world
+
+
+def backproject_bbox_to_3d(
+    bbox_2d: list,          # [x1, y1, x2, y2] 像素坐标
+    depth_map: np.ndarray,  # (H, W) 深度图（来自 LiDAR 投影）
+    K: np.ndarray,
+    R_cam_to_world: np.ndarray,
+    T_cam_to_world: np.ndarray,
+    dist_coeff: np.ndarray | None = None,
+) -> list:
+    """将 2D 检测框映射到 3D 世界坐标系中的包围盒。
+
+    这是 V3 的核心功能：大模型检测出 2D bbox → 取 bbox 内有效的
+    LiDAR 深度值 → 反投影到 3D 空间 → 计算 3D 包围盒。
+
+    Args:
+        bbox_2d:         [x1, y1, x2, y2]
+        depth_map:       (H, W) 深度图，无效区域为 0 或 NaN
+        K:               (3,3) 相机内参
+        R_cam_to_world:  (3,3)
+        T_cam_to_world:  (3,)
+        dist_coeff:      (5,) 畸变系数
+
+    Returns:
+        [center_x, center_y, center_z, width, height, depth_meters]
+        若 bbox 内无有效深度，返回空列表。
+    """
+    x1, y1, x2, y2 = [int(v) for v in bbox_2d]
+    x1, y1 = max(0, x1), max(0, y1)
+    x2, y2 = min(depth_map.shape[1] - 1, x2), min(depth_map.shape[0] - 1, y2)
+
+    if x2 <= x1 or y2 <= y1:
+        return []
+
+    # 提取 bbox 内的深度值
+    roi_depth = depth_map[y1:y2 + 1, x1:x2 + 1]
+    valid_depths = roi_depth[(roi_depth > 0) & np.isfinite(roi_depth)]
+
+    if len(valid_depths) < 5:
+        return []
+
+    # 取中位数深度作为 bbox 参考深度，用 bbox 中心像素反投影
+    d_median = float(np.median(valid_depths))
+    u_center = (x1 + x2) / 2.0
+    v_center = (y1 + y2) / 2.0
+
+    center_3d = backproject_pixel_to_3d(
+        u_center, v_center, d_median, K, R_cam_to_world, T_cam_to_world, dist_coeff
+    )
+
+    # 估算 3D 尺寸：用 bbox 四角反投影后取跨度
+    corners_2d = [[x1, y1], [x2, y1], [x1, y2], [x2, y2]]
+    corners_3d = []
+    for cu, cv in corners_2d:
+        try:
+            p3 = backproject_pixel_to_3d(
+                cu, cv, d_median, K, R_cam_to_world, T_cam_to_world, dist_coeff
+            )
+            corners_3d.append(p3)
+        except Exception:
+            pass
+
+    if len(corners_3d) < 2:
+        return []
+
+    corners_3d = np.array(corners_3d)
+    extent = np.max(corners_3d, axis=0) - np.min(corners_3d, axis=0)
+
+    return [
+        float(center_3d[0]), float(center_3d[1]), float(center_3d[2]),
+        float(extent[0]), float(extent[1]), float(extent[2]),
+    ]
+
+
 # ============================================================================
 # 3. 点云读取
 # ============================================================================
@@ -427,6 +799,43 @@ def read_image(file_path: str) -> np.ndarray:
 # ============================================================================
 # 5. 点云过滤
 # ============================================================================
+
+def uv_to_depth_map(
+    uv: np.ndarray,
+    depths: np.ndarray,
+    image_width: int,
+    image_height: int,
+) -> np.ndarray:
+    """将稀疏投影点 (uv, depth) 转为稠密深度图。
+
+    多个点落在同一像素时取最小值（最近的点遮挡远的点）。
+
+    深度图可直接用于 backproject_bbox_to_3d() 做 V3 标注映射。
+
+    Args:
+        uv:           (M, 2) 像素坐标。
+        depths:       (M,) 深度值。
+        image_width:  图像宽度。
+        image_height: 图像高度。
+
+    Returns:
+        (H, W) float64 深度图，无投影点的像素值为 0。
+    """
+    depth_map = np.zeros((image_height, image_width), dtype=np.float64)
+    u_int = np.round(uv[:, 0]).astype(int)
+    v_int = np.round(uv[:, 1]).astype(int)
+    valid = (u_int >= 0) & (u_int < image_width) & (v_int >= 0) & (v_int < image_height)
+    u_int, v_int = u_int[valid], v_int[valid]
+    d_valid = depths[valid]
+
+    # 对每个像素取最小深度（处理遮挡）
+    for i in range(len(u_int)):
+        ui, vi = u_int[i], v_int[i]
+        if depth_map[vi, ui] == 0 or d_valid[i] < depth_map[vi, ui]:
+            depth_map[vi, ui] = d_valid[i]
+
+    return depth_map
+
 
 def filter_pointcloud(
     points: np.ndarray,
