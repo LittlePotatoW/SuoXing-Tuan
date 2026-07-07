@@ -191,12 +191,19 @@ def quat_to_rotation(qw: float, qx: float, qy: float, qz: float) -> np.ndarray:
     签名和公式与 backend/reconstruction/transform.py:quat_to_rotation 完全一致。
     w 是实部: q = qw + qx·i + qy·j + qz·k
 
+    会自动归一化四元数，处理浮点误差导致的非单位范数输入。
+
     Args:
         qw, qx, qy, qz: 四元数分量（w 为实部）。
 
     Returns:
         (3, 3) 旋转矩阵，dtype=float64。
     """
+    # 归一化：确保单位四元数，否则旋转矩阵不正交
+    norm = np.sqrt(qw*qw + qx*qx + qy*qy + qz*qz)
+    if norm > 0:
+        qw, qx, qy, qz = qw / norm, qx / norm, qy / norm, qz / norm
+
     return np.array([
         [1 - 2*qy**2 - 2*qz**2,  2*qx*qy - 2*qz*qw,      2*qx*qz + 2*qy*qw],
         [2*qx*qy + 2*qz*qw,      1 - 2*qx**2 - 2*qz**2,  2*qy*qz - 2*qx*qw],
@@ -604,10 +611,10 @@ def backproject_pixel_to_3d(
     dist = dist_coeff if dist_coeff is not None else np.zeros(5)
 
     # 步骤 1: 去畸变 + 归一化坐标
+    # 注意: 不传 P 参数，undistortPoints 返回归一化坐标（而非像素坐标）
+    # 归一化坐标定义: x_norm = (u - cx) / fx, y_norm = (v - cy) / fy
     pixel_pt = np.array([[[u, v]]], dtype=np.float32)
-    undistorted = cv2.undistortPoints(
-        pixel_pt, K, dist, P=K  # P=K 表示输出仍用原内参映射
-    )
+    undistorted = cv2.undistortPoints(pixel_pt, K, dist)
     x_norm = undistorted[0, 0, 0]  # X_cam / Z_cam
     y_norm = undistorted[0, 0, 1]  # Y_cam / Z_cam
 
