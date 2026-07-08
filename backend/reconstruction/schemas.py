@@ -55,7 +55,7 @@ class PointCloudData(BaseModel):
 class CameraView(BaseModel):
     """
     单个相机的一帧: 图片 + 这个相机在车上的安装位姿。
-    
+    因为你有两个工业相机，所以每帧会有两个 CameraView。
     """
     image_data: Optional[bytes] = Field(default=None)   # JPEG 编码的图片
     width: int = 0
@@ -125,6 +125,9 @@ class FusedFrame(BaseModel):
     cameras_world: list[Pose6DoF] = Field(default_factory=list)
     images: list[bytes] = Field(default_factory=list)
 
+    # 世界系点云对应的颜色（扁平 N*3, uint8 RGB, 空列表=无颜色）
+    point_colors: list[int] = Field(default_factory=list)
+
 
 # ============================================================
 # 5. 表面重建结果 — 推送给前端渲染
@@ -136,6 +139,7 @@ class MeshData(BaseModel):
     faces: list[int] = Field(default_factory=list)         # 扁平 [i0,i1,i2, ...] M*3
     vertex_count: int = 0
     face_count: int = 0
+    vertex_colors: list[int] = Field(default_factory=list) # 扁平 [r0,g0,b0, ...] N*3, uint8
 
 
 class CrackAnnotation(BaseModel):

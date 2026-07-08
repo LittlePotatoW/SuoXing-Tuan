@@ -1,13 +1,17 @@
 # ============================================================
-#  文件: backend/reconstruction/state_estimator.py
-#  所属: SuoXing-Tuan / V2 三维重建
-#  职责: 根据运动学参数持续估算小车位置，鲁棒处理传感器异常
+# backend/data_pre_processing/state_estimator.py
+# 小车状态估计器 — 根据运动学参数持续估算小车位置
 #
-#  模型: 自行车模型 (Bicycle Model)
-#    dx/dt = v * cos(θ)
-#    dy/dt = v * sin(θ)
-#    dθ/dt = v * tan(δ) / L
-#    v=速度, θ=航向角, δ=转向角, L=轴距
+# 模型: 自行车模型 (Bicycle Model)
+#   dx/dt = v * cos(θ)
+#   dy/dt = v * sin(θ)
+#   dθ/dt = v * tan(δ) / L
+#   v=速度, θ=航向角, δ=转向角, L=轴距
+#
+# 用法:
+#   estimator = StateEstimator(wheel_base=1.5)
+#   state = estimator.update_kinematics(velocity=0.5, steering_angle=0.0, timestamp_ns=...)
+#   state = estimator.get_position(timestamp_ns=...)
 # ============================================================
 
 # ============================================================
@@ -15,19 +19,18 @@
 # ============================================================
 
 # 最大合理加速度 (m/s²)。超过此值视为传感器异常，钳制。
-# 巡检小车速度慢，5 m/s² ≈ 0.5g 已经很大
 MAX_ACCEL = 5.0
 
-# 最大合理减速度 (m/s²)，刹车比加速猛，给大一点
+# 最大合理减速度 (m/s²)
 MAX_DECEL = 8.0
 
-# 中值滤波窗口大小 (必须是奇数)。越大越平滑但越滞后。
+# 中值滤波窗口大小 (必须是奇数)
 MEDIAN_WINDOW = 5
 
 # 速度突然归零的阈值: v_prev > 此值 且 v_new == 0 → 判定为传输错误
 MIN_SPEED_FOR_ZERO_CHECK = 0.1    # m/s
 
-# 最大转向角 (rad)。超过此值钳制。
+# 最大转向角 (rad)
 MAX_STEERING = 0.8    # ~45°
 
 # ============================================================
@@ -39,7 +42,7 @@ from dataclasses import dataclass
 import logging
 import math
 
-logger = logging.getLogger("reconstruction.state_estimator")
+logger = logging.getLogger("data_pre_processing.state_estimator")
 
 
 @dataclass
@@ -111,11 +114,11 @@ class StateEstimator:
 
         返回: 更新后的 CarState
         """
-        # 步骤 1: 异常检测 — 筛掉明显错误的数据
+        # 步骤 1: 异常检测
         velocity = self._validate_velocity(velocity)
         steering_angle = self._clamp(steering_angle, -MAX_STEERING, MAX_STEERING)
 
-        # 步骤 2: 中值滤波 — 平滑随机噪声
+        # 步骤 2: 中值滤波
         self._vel_window.append(velocity)
         self._steer_window.append(steering_angle)
 
@@ -127,7 +130,7 @@ class StateEstimator:
             dt = 0.0
         else:
             dt = (timestamp_ns - self._last_timestamp_ns) / 1e9  # ns → s
-            dt = self._clamp(dt, 0.0, 1.0)  # 单次更新间隔不超过 1 秒
+            dt = self._clamp(dt, 0.0, 1.0)
 
         # 步骤 4: 自行车模型积分
         if dt > 0:
@@ -243,12 +246,11 @@ class StateEstimator:
         规则:
           1. 加速度超限 → 钳制到物理极限
           2. 速度从非零突然归零 → 判定为传输错误，沿用上一个值
-          3. 速度不能为负（小车不倒车的情况）
         """
         if v < 0:
             v = 0.0
 
-        # 零速检测: 上一帧还在走，这一帧突然为 0 → 传输错误
+        # 零速检测
         if self._last_valid_vel > MIN_SPEED_FOR_ZERO_CHECK and v == 0.0:
             logger.debug("Zero-speed anomaly: v_prev=%.2f, v_cur=0 → using last valid", self._last_valid_vel)
             self._rejected_count += 1
@@ -288,16 +290,13 @@ def _bicycle_step(
     """
     自行车模型一步积分。
 
-    输入:  当前 (x, y, yaw), 速度 v, 转向角 steer, 轴距 L, 时间步 dt
-    输出:  新的 (x, y, yaw)
+    直线运动: x += v*cos(yaw)*dt, y += v*sin(yaw)*dt
+    转弯: 绕瞬时旋转中心 (ICR) 做圆弧运动
     """
     if abs(steer) < 1e-6:
-        # 直线运动
         x += v * math.cos(yaw) * dt
         y += v * math.sin(yaw) * dt
-        # yaw 不变
     else:
-        # 转弯: 绕瞬时旋转中心 (ICR) 做圆弧运动
         turn_radius = wheel_base / math.tan(steer)
         angular_vel = v / turn_radius
         yaw_new = yaw + angular_vel * dt
