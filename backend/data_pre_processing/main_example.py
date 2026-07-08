@@ -237,18 +237,13 @@ def main():
     #  Step 0: 初始化
     # ══════════════════════════════════════════════════════════════
 
-    # TODO: 替换为同事提供的正式 DeadReckoningEngine 实例
-    #       例如:
-    #       from real_dead_reckoning import DeadReckoningEngine
-    #       dr_engine = DeadReckoningEngine()
-    from data_pre_processing.kinematics_api import DeadReckoningEngine
+    from data_pre_processing.state_estimator import StateEstimator
     from data_pre_processing.data_fusion_manager import DataFusionManager
     from data_pre_processing.defect_projector import DefectProjector
     from data_pre_processing.defect_table_generator import DefectTableGenerator
 
     # ── 创建航迹推算引擎 ──
-    dr_engine = DeadReckoningEngine(
-        initial_x=0.0, initial_y=0.0, initial_yaw=0.0
+    dr_engine = StateEstimator(wheel_base=1.5)
     )
 
     # ── 创建融合管理器（依赖注入） ──
@@ -300,8 +295,8 @@ def main():
 
     # 查看航迹推算状态
     dr_state = dr_engine.state
-    print(f"  航迹推算状态: x={dr_state['x']:.3f}m, y={dr_state['y']:.3f}m, "
-          f"yaw={dr_state['theta_deg']:.2f}°")
+    print(f"  航迹推算状态: x={dr_state.x:.3f}m, y={dr_state.y:.3f}m, "
+          f"yaw={math.degrees(dr_state.yaw):.2f}°")
     print()
 
     # ══════════════════════════════════════════════════════════════
@@ -529,11 +524,12 @@ def main():
     print(f"    成功融合: {stats['fusion_count']} 帧")
     print(f"    跳过: {stats['skip_count']} 帧")
     print(f"    缓存相机数: {stats['cached_cameras']}")
+    est_stats = dr_engine.stats
     print(f"  航迹推算状态:")
-    print(f"    位置: x={dr_state['x']:.3f}m, y={dr_state['y']:.3f}m")
-    print(f"    朝向: {dr_state['theta_deg']:.2f}°")
-    print(f"    总行驶距离: {dr_state['total_distance_m']:.2f}m")
-    print(f"    积分次数: {dr_state['integration_count']}")
+    print(f"    位置: x={dr_state.x:.3f}m, y={dr_state.y:.3f}m")
+    print(f"    朝向: {math.degrees(dr_state.yaw):.2f}°")
+    print(f"    积分次数: {est_stats['updates']}")
+    print(f"    拒绝异常: {est_stats['rejected']}")
     print(f"  缺陷统计:")
     print(f"    已记录缺陷: {table_gen.count} 个")
     print()

@@ -17,7 +17,7 @@
 #  数据流对照:
 #    location_data.car.pose        → 丢弃（不信任 GPS）
 #    location_data.camera[].camera_pose → 缓存为外参池
-#    location_data.car.kinematics  → 喂给 DeadReckoningEngine
+#    location_data.car.kinematics  → 喂给 StateEstimator
 #    detection_data.car_position   → 丢弃（使用航迹推算输出）
 #    detection_data.kinematics     → 丢弃（使用 location 的最新值）
 #    detection_data.point_cloud    → 透传（必须字段）
@@ -25,12 +25,13 @@
 # ============================================================
 
 import logging
+import math
 from typing import Optional
 
-# TODO: 替换为同事提供的正式 DeadReckoningEngine 实例时，
+# TODO: 替换为同事提供的正式 StateEstimator 实例时，
 #       只需修改 import 路径:
-#       from real_dead_reckoning import DeadReckoningEngine
-from .kinematics_api import DeadReckoningEngine
+#       from real_dead_reckoning import StateEstimator
+from .state_estimator import StateEstimator
 
 logger = logging.getLogger("data_pre_processing.fusion")
 
@@ -41,7 +42,7 @@ class DataFusionManager:
 
     核心职责:
       1. 维护外参缓存池：持续从 location_data 接收 camera_pose（标定值）
-      2. 维护运动学状态：持续将 kinematics 喂给 DeadReckoningEngine
+      2. 维护运动学状态：持续将 kinematics 喂给 StateEstimator
       3. 触发融合：收到 detection_data 时输出 final_data
 
     使用方式:
@@ -57,7 +58,7 @@ class DataFusionManager:
           ...
     """
 
-    def __init__(self, dead_reckoning_engine: DeadReckoningEngine):
+    def __init__(self, dead_reckoning_engine: StateEstimator):
         """
         初始化融合管理器。
 
@@ -68,8 +69,8 @@ class DataFusionManager:
               - get_pose(timestamp_ns: int) -> dict
         """
         # ── 依赖注入：航迹推算引擎 ──
-        # TODO: 替换为同事提供的正式 DeadReckoningEngine 实例
-        self._dr_engine: DeadReckoningEngine = dead_reckoning_engine
+        # TODO: 替换为同事提供的正式 StateEstimator 实例
+        self._dr_engine: StateEstimator = dead_reckoning_engine
 
         # ── 外参缓存池: {camera_index: camera_pose_dict} ──
         # 从 location_data.camera[] 提取，按数组索引存储
@@ -99,7 +100,7 @@ class DataFusionManager:
 
         处理逻辑（按 final_data.md 协议）:
           1. 提取 camera[] 数组，按索引缓存 camera_pose（外参）
-          2. 提取 car.kinematics，喂给 DeadReckoningEngine
+          2. 提取 car.kinematics，喂给 StateEstimator
           3. 丢弃 car.pose（不信任 GPS）
 
         参数:
@@ -140,7 +141,11 @@ class DataFusionManager:
                         "steering_angle": float(kinematics.get("steering_angle", 0.0)),
                         "wheel_base": float(kinematics.get("wheel_base", 1.5)),
                     }
-                    self._dr_engine.feed_kinematics(kin, timestamp_ns)
+                    self._dr_engine.update_kinematics(
+                        velocity=kin["velocity"],
+                        steering_angle=kin["steering_angle"],
+                        timestamp_ns=timestamp_ns,
+                    )
                     self._latest_kinematics = kin
                 else:
                     logger.debug("location_data.car 中无 kinematics 字段")
@@ -167,7 +172,7 @@ class DataFusionManager:
 
         处理逻辑（按 final_data.md 协议）:
           1. 校验 point_cloud → 缺失则丢弃整帧
-          2. 提取 timestamp_ns，从 DeadReckoningEngine 查询世界位姿
+          2. 提取 timestamp_ns，从 StateEstimator 查询世界位姿
           3. 遍历 camera_views，用外参缓存池覆盖 camera_pose
           4. 组装 final_data，应用所有 Fallback 策略
 
@@ -183,7 +188,7 @@ class DataFusionManager:
           timestamp_ns   ← detection 透传
           point_cloud    ← detection 透传（缺失 → 丢弃整帧）
           camera_views   ← detection（camera_pose 被 location 缓存覆盖）
-          car_position   ← DeadReckoningEngine.get_pose()
+          car_position   ← StateEstimator.get_pose()
           kinematics     ← location_data 最新值（fallback: detection 自带）
         """
         try:
@@ -218,7 +223,18 @@ class DataFusionManager:
                 point_count = len(points) // 3
 
             # ── 3. 从航迹推算引擎查询世界位姿 ──
-            car_pose = self._dr_engine.get_pose(timestamp_ns)
+            car_state = self._dr_engine.get_position(timestamp_ns)
+            if car_state is None:
+                logger.warning("Frame %s: 航迹推算引擎无数据 → 丢弃整帧", frame_id)
+                self._skip_count += 1
+                return None
+            # CarState → dict（兼容下游）
+            half = car_state.yaw / 2.0
+            car_pose = {
+                "position": {"x": car_state.x, "y": car_state.y, "z": car_state.z},
+                "rotation": {"qw": math.cos(half), "qx": 0.0, "qy": 0.0,
+                             "qz": math.sin(half)},
+            }
 
             # ── 4. 处理 camera_views ──
             # final_data.md: camera_views 缺失 → []

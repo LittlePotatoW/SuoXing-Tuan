@@ -4,13 +4,14 @@
 #  职责: 包入口，导出所有核心类
 # ============================================================
 
-from .kinematics_api import DeadReckoningEngine
+from .state_estimator import StateEstimator, CarState
 from .data_fusion_manager import DataFusionManager
 from .defect_projector import DefectProjector
 from .defect_table_generator import DefectTableGenerator, DefectRecord
 
 __all__ = [
-    "DeadReckoningEngine",
+    "StateEstimator",
+    "CarState",
     "DataFusionManager",
     "DefectProjector",
     "DefectTableGenerator",
