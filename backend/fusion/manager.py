@@ -1,11 +1,7 @@
 # ============================================================
-#  文件: backend/data_pre_processing/data_fusion_manager.py
-#  所属: SuoXing-Tuan / 数据融合与缺陷投影模块
-#  职责: 数据融合管理器
-#        - 实时接收 detection_data（传感器数据）和 location_data（定位数据）
-#        - 融合两路数据流，输出符合 final_data.md 标准的 SensorFrame
-#        - 丢弃不可信的 GPS 定位，纯靠航迹推算确定小车位姿
-#
+# backend/fusion/manager.py
+# 数据融合管理器 — 实时接收 location_data/detection_data，融合输出 SensorFrame
+# ============================================================
 #  融合逻辑:
 #    1. location_data → 缓存相机外参 + 喂 kinematics 给航迹推算引擎
 #    2. detection_data → 触发融合:

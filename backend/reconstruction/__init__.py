@@ -1,2 +1,4 @@
-# backend/reconstruction — 三维重建管线
-# 子模块: schemas / transform / fusion / engine / routes
+# ============================================================
+# backend/reconstruction/__init__.py
+# 三维重建管线 — 点云累积 → 表面重建 → 缺陷标注
+# ============================================================

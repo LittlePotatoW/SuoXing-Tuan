@@ -1,10 +1,6 @@
 # ============================================================
-#  文件: backend/data_pre_processing/kinematics_api.py
-#  所属: SuoXing-Tuan / 数据融合与缺陷投影模块
-#  职责: 运动学数据预处理 API
-#        - 接收 kinematics 数据 → 喂入 StateEstimator
-#        - 对外提供 /kinematics /position /estimator/stats 端点
-#        - 提供 quat_to_yaw 工具函数
+# backend/state_estimation/router.py
+# 运动学数据预处理 API — /kinematics /position /estimator/stats 端点
 # ============================================================
 
 import logging

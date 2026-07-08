@@ -1,5 +1,5 @@
 # ============================================================
-# backend/inference.py
+# backend/inference/engine.py
 # YOLO 推理引擎 — 模型加载、推理、热切换
 #
 # 支持格式: .pt (PyTorch), .onnx (ONNX), .engine (TensorRT)

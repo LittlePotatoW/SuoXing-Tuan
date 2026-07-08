@@ -44,6 +44,7 @@ const loaded = ref(false)
 const currentFrame = ref(0)
 const totalFrames = ref(0)
 const stats = reactive({ total_frames: 0, total_points: 0, vertex_count: 0, face_count: 0 })
+const error = ref('')
 
 let ws: WebSocket | null = null
 
@@ -57,8 +58,10 @@ async function loadScene() {
   const base = getBaseUrl()
 
   // 关闭旧 WebSocket 并创建新连接
-  if (ws) { ws.onmessage = null; ws.close() }
+  if (ws) { ws.onmessage = null; ws.onerror = null; ws.onclose = null; ws.close() }
   ws = new WebSocket(wsUrl())
+  ws.onerror = () => { error.value = 'WebSocket 连接失败，请检查后端是否启动' }
+  ws.onclose = () => { error.value = 'WebSocket 已断开' }
   ws.onmessage = (e) => {
     const msg = JSON.parse(e.data)
     if (!msg || !msg.type) return

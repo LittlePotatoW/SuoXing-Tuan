@@ -1,5 +1,5 @@
 # ============================================================
-# backend/data_pre_processing/state_estimator.py
+# backend/state_estimation/estimator.py
 # 小车状态估计器 — 根据运动学参数持续估算小车位置
 #
 # 模型: 自行车模型 (Bicycle Model)
@@ -90,8 +90,9 @@ class StateEstimator:
         self._last_vel: float = 0.0
         self._last_timestamp_ns: int = 0
 
-        # 历史轨迹 (用于查询任意时刻的位置)
+        # 历史轨迹 (用于查询任意时刻的位置)，限制大小防止内存泄漏
         self._history: list[CarState] = []
+        self._history_max: int = 10_000
 
         # 统计
         self._update_count: int = 0
@@ -115,7 +116,7 @@ class StateEstimator:
         返回: 更新后的 CarState
         """
         # 步骤 1: 异常检测
-        velocity = self._validate_velocity(velocity)
+        velocity = self._validate_velocity(velocity, timestamp_ns)
         steering_angle = self._clamp(steering_angle, -MAX_STEERING, MAX_STEERING)
 
         # 步骤 2: 中值滤波
@@ -150,6 +151,8 @@ class StateEstimator:
             steering=s_filtered,
         )
         self._history.append(self._state)
+        if len(self._history) > self._history_max:
+            self._history = self._history[-self._history_max // 2:]
         self._last_vel = v_filtered
         self._last_timestamp_ns = timestamp_ns
         self._update_count += 1
@@ -169,6 +172,8 @@ class StateEstimator:
         self._state.yaw = yaw
         self._state.timestamp_ns = timestamp_ns
         self._history.append(self._state)
+        if len(self._history) > self._history_max:
+            self._history = self._history[-self._history_max // 2:]
         return self._state
 
     def get_position(self, timestamp_ns: int) -> CarState | None:
@@ -239,7 +244,7 @@ class StateEstimator:
     #  内部: 异常检测
     # ================================================================
 
-    def _validate_velocity(self, v: float) -> float:
+    def _validate_velocity(self, v: float, timestamp_ns: int) -> float:
         """
         检测并修复异常速度值。
 
@@ -258,7 +263,7 @@ class StateEstimator:
 
         # 加速度检测
         if self._last_timestamp_ns > 0 and self._last_vel > 0:
-            dt = max((self._last_timestamp_ns - self._state.timestamp_ns) / 1e9, 0.001)
+            dt = max((timestamp_ns - self._last_timestamp_ns) / 1e9, 0.001)
             if dt > 0:
                 accel = (v - self._last_vel) / dt
 

@@ -1,8 +1,6 @@
 # ============================================================
-#  文件: backend/reconstruction/engine.py
-#  所属: SuoXing-Tuan / V2 三维重建管线
-#  职责: 累积世界坐标系点云 → 表面重建(Mesh) → 输出结果
-#  依赖: Open3D, NumPy
+# backend/reconstruction/engine.py
+# 三维重建引擎 — 累积点云 → Poisson 表面重建 → 输出 Mesh
 # ============================================================
 
 # ============================================================
@@ -73,6 +71,7 @@ class ReconstructionEngine:
         self._frame_count: int = 0
         self._total_points: int = 0
         self._last_rebuild_at_frame: int = 0
+        self._rebuild_in_progress: bool = False      # 防双重重建
         self._latest_mesh: MeshData | None = None
         self._cracks: list[CrackAnnotation] = []
         self._status: str = "accumulating"
@@ -108,9 +107,15 @@ class ReconstructionEngine:
             need_rebuild = self._total_points > self.max_points
             rebuild_triggered = self._frame_count - self._last_rebuild_at_frame >= self.rebuild_interval_frames
 
-        if need_rebuild:
-            self._compact_points()
-        if rebuild_triggered:
+            if need_rebuild:
+                self._compact_points()
+            if rebuild_triggered and not self._rebuild_in_progress:
+                self._rebuild_in_progress = True
+                should_rebuild = True
+            else:
+                should_rebuild = False
+
+        if should_rebuild:
             self._rebuild()
 
     def add_crack(self, x: float, y: float, z: float,
@@ -187,6 +192,9 @@ class ReconstructionEngine:
             logger.error("Rebuild failed: %s", e, exc_info=True)
             with self._lock:
                 self._status = "error"
+        finally:
+            with self._lock:
+                self._rebuild_in_progress = False
 
         elapsed = (time.perf_counter() - t0) * 1000
         logger.info("Rebuild done: %d verts, %d faces, %.0fms",

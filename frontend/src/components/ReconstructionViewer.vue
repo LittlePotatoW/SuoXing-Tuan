@@ -53,6 +53,15 @@ onMounted(() => {
   scene.add(new THREE.GridHelper(5, 20, 0x444444, 0x333333))
   scene.add(new THREE.AxesHelper(1))
 
+  // 光照（一次性添加到 scene，不随 mesh 更新销毁）
+  scene.add(new THREE.AmbientLight(0xffffff, 0.7))
+  const d1 = new THREE.DirectionalLight(0xffffff, 0.9)
+  d1.position.set(2, 4, 3)
+  scene.add(d1)
+  const d2 = new THREE.DirectionalLight(0xffffff, 0.5)
+  d2.position.set(-2, -1, -2)
+  scene.add(d2)
+
   // 响应窗口大小变化
   window.addEventListener('resize', onResize)
 
@@ -127,14 +136,6 @@ function updateMesh(data: { vertices: number[]; faces: number[]; vertex_count: n
   const wireMat = new THREE.MeshBasicMaterial({ color: 0x666666, wireframe: true })
   const wire = new THREE.Mesh(geo, wireMat)
   meshGroup.add(wire)
-
-  // 光照
-  const ambient = new THREE.AmbientLight(0xffffff, 0.7)
-  const d1 = new THREE.DirectionalLight(0xffffff, 0.9)
-  d1.position.set(2, 4, 3)
-  const d2 = new THREE.DirectionalLight(0xffffff, 0.5)
-  d2.position.set(-2, -1, -2)
-  meshGroup.add(ambient, d1, d2)
 }
 
 function updateTrail(trail: number[][] | null) {
