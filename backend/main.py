@@ -18,6 +18,7 @@ import json
 import asyncio
 import logging
 import shutil
+import tempfile
 from io import BytesIO
 from pathlib import Path
 from uuid import uuid4
@@ -145,19 +146,25 @@ async def model_load(model_file: UploadFile = File(...)):
     if ext not in (".pt", ".onnx", ".engine"):
         raise HTTPException(400, f"Unsupported format: {ext}. Use .pt, .onnx, or .engine")
 
-    # 分块写入 + 大小限制
+    # 分块写入 + 大小限制 + 原子写入（先写临时文件再 rename）
     try:
         dest = MODEL_DIR / filename
         max_bytes = MAX_MODEL_MB * 1024 * 1024
         total = 0
-        with open(dest, "wb") as f:
+        tmp = tempfile.NamedTemporaryFile(dir=MODEL_DIR, delete=False, suffix=".tmp")
+        try:
             while chunk := await model_file.read(1024 * 1024):
                 total += len(chunk)
                 if total > max_bytes:
-                    f.close()
-                    dest.unlink(missing_ok=True)
+                    tmp.close()
+                    Path(tmp.name).unlink(missing_ok=True)
                     raise HTTPException(413, f"Model too large (max {MAX_MODEL_MB} MB)")
-                f.write(chunk)
+                tmp.write(chunk)
+            tmp.close()
+            os.replace(tmp.name, dest)  # 原子 rename
+        except Exception:
+            Path(tmp.name).unlink(missing_ok=True)
+            raise
 
         logger.info("Model saved: %s (%d bytes)", dest, dest.stat().st_size)
 

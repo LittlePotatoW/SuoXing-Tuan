@@ -43,6 +43,9 @@ Thumbs.db
 *.ckpt
 *.pt
 
+# 中转站（不入仓库）
+relay/
+
 # 测试输出（生成的数据不入仓库）
 backend/tests/output/*
 backend/tests/fixtures/

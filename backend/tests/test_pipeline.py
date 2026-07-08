@@ -193,6 +193,8 @@ def main():
     print(f"  最终状态:   {result.status}")
     print(f"  网格顶点数: {result.mesh.vertex_count}")
     print(f"  网格面数:   {result.mesh.face_count}")
+    print(f"  顶点颜色:   {'有' if result.mesh.vertex_colors else '无'} "
+          f"({len(result.mesh.vertex_colors)} 个值)")
     print(f"  相机轨迹点: {len(result.camera_trail)}")
 
     # ── 保存 Mesh 到文件 ──
@@ -201,10 +203,10 @@ def main():
 
     if result.mesh.vertex_count > 0:
         _save_mesh_ply(result, output_dir)
-        print(f"\n  ✅ Mesh 已保存到: {output_dir}/test_mesh.ply")
-        print(f"     可以用 CloudCompare / MeshLab 打开查看")
+        print(f"\n  [OK] Mesh saved to: {output_dir}/test_mesh.ply")
+        print(f"       Open with CloudCompare / MeshLab")
     else:
-        print(f"\n  ❌ 重建失败: 没有生成网格顶点")
+        print(f"\n  [FAIL] Reconstruction failed: no mesh vertices generated")
 
     # ── 保存重建结果的 JSON（不含 Mesh，太大了）─
     result_json = {
@@ -213,13 +215,14 @@ def main():
         "total_points": result.total_points,
         "mesh_vertices": result.mesh.vertex_count,
         "mesh_faces": result.mesh.face_count,
+        "has_vertex_colors": len(result.mesh.vertex_colors) > 0,
         "camera_trail_points": len(result.camera_trail),
         "cracks_count": len(result.cracks),
     }
     json_path = os.path.join(output_dir, "test_result.json")
     with open(json_path, "w", encoding="utf-8") as f:
         json.dump(result_json, f, indent=2, ensure_ascii=False)
-    print(f"  📄 结果摘要已保存到: {json_path}")
+    print(f"  [OK] Result summary saved to: {json_path}")
 
     # ── 断言 ──
     assert success > 0, "没有成功融合任何帧"
@@ -227,9 +230,16 @@ def main():
     assert result.mesh.vertex_count > 100, f"网格顶点太少 ({result.mesh.vertex_count})，重建可能有问题"
     assert result.mesh.face_count > 100, f"网格面数太少 ({result.mesh.face_count})"
     assert len(result.camera_trail) > 0, "没有记录相机轨迹"
+    # 颜色字段: 假图像数据不可解码，vertex_colors 应为空（优雅降级）
+    assert isinstance(result.mesh.vertex_colors, list), "vertex_colors 必须存在（哪怕是空列表）"
+    if result.mesh.vertex_colors:
+        assert len(result.mesh.vertex_colors) == result.mesh.vertex_count * 3, \
+            f"有颜色时长度应 = vertex_count*3 ({result.mesh.vertex_count}*3)"
+        assert all(0 <= c <= 255 for c in result.mesh.vertex_colors), \
+            "颜色值必须在 uint8 范围"
 
     print()
-    print("  🎉 全部断言通过！管线正常工作。")
+    print("  [PASS] All assertions passed! Pipeline is working correctly.")
     print("=" * 60)
 
 
@@ -243,6 +253,12 @@ def _save_mesh_ply(result, output_dir: str) -> None:
     mesh = o3d.geometry.TriangleMesh()
     mesh.vertices = o3d.utility.Vector3dVector(verts)
     mesh.triangles = o3d.utility.Vector3iVector(faces)
+
+    # 顶点颜色
+    if result.mesh.vertex_colors:
+        vc = np.array(result.mesh.vertex_colors, dtype=np.float64).reshape(-1, 3) / 255.0
+        mesh.vertex_colors = o3d.utility.Vector3dVector(vc)
+
     mesh.compute_vertex_normals()
 
     ply_path = os.path.join(output_dir, "test_mesh.ply")

@@ -33,6 +33,7 @@ function draw() {
   currentSrc = src
 
   img.onload = () => {
+    if (!canvasRef.value) return  // 组件已卸载
     if (props.imageSrc !== currentSrc) return  // 防竞态
 
     const dpr = window.devicePixelRatio || 1
