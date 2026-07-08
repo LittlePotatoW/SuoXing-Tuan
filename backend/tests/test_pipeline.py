@@ -17,11 +17,11 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import numpy as np
 
-from reconstruction.schemas import (
+from common.schemas import (
     SensorFrame, PointCloudData, CameraView, CarPosition, KinematicsData,
     Pose6DoF, Vector3, Quaternion,
 )
-from reconstruction.fusion import DataFusion
+from fusion.datafusion import DataFusion
 from reconstruction.engine import ReconstructionEngine
 
 logging.basicConfig(

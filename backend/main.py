@@ -28,8 +28,10 @@ from PIL import Image
 from fastapi import FastAPI, Request, UploadFile, File, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
-from inference import InferenceEngine, InferenceResponse, DetectionResult
+from inference.engine import InferenceEngine
+from inference.schemas import InferenceResponse, DetectionResult
 from reconstruction.routes import router as reconstruction_router
+from state_estimation.router import router as preprocessing_router
 
 # ==================== 配置 ====================
 
@@ -77,6 +79,7 @@ app.add_middleware(
 )
 
 app.include_router(reconstruction_router)
+app.include_router(preprocessing_router)
 
 # ==================== 请求追踪中间件 ====================
 

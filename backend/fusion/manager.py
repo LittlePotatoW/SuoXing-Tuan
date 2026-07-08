@@ -31,9 +31,9 @@ from typing import Optional
 # TODO: 替换为同事提供的正式 StateEstimator 实例时，
 #       只需修改 import 路径:
 #       from real_dead_reckoning import StateEstimator
-from .state_estimator import StateEstimator
+from state_estimation.estimator import StateEstimator
 
-logger = logging.getLogger("data_pre_processing.fusion")
+logger = logging.getLogger("fusion.manager")
 
 
 class DataFusionManager:

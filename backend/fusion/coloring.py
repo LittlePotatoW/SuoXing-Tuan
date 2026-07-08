@@ -8,7 +8,7 @@ from typing import Optional, Tuple
 
 import numpy as np
 
-logger = logging.getLogger("reconstruction.coloring")
+logger = logging.getLogger("fusion.coloring")
 
 
 def decode_image(image_bytes: bytes) -> Optional[np.ndarray]:
@@ -132,7 +132,7 @@ def sample_colors_from_cameras(
         return None
 
     # 需要 transform 模块的 pose_to_matrix
-    from reconstruction.transform import pose_to_matrix
+    from common.transform import pose_to_matrix
 
     best_colors = np.full((n, 3), 128, dtype=np.uint8)
     best_depths = np.full(n, np.inf)

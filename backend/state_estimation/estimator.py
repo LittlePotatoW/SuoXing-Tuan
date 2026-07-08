@@ -42,7 +42,7 @@ from dataclasses import dataclass
 import logging
 import math
 
-logger = logging.getLogger("data_pre_processing.state_estimator")
+logger = logging.getLogger("state_estimation.estimator")
 
 
 @dataclass

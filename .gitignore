@@ -49,7 +49,7 @@ relay/
 # 测试输出（生成的数据不入仓库）
 backend/tests/output/*
 backend/tests/fixtures/
-backend/data
+backend/test_data
 
 # 训练数据集（本地管理，不入仓库）
 model-training/yolo-training/datasets/*/

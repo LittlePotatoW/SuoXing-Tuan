@@ -5,15 +5,14 @@
 
 import logging
 import asyncio
-from dataclasses import dataclass
-from pathlib import Path
 from typing import Optional
 
 import numpy as np
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
-from reconstruction.schemas import SensorFrame
-from reconstruction.fusion import DataFusion
+from common.schemas import SensorFrame
+from common.camera import CameraIntrinsics
+from fusion.datafusion import DataFusion
 from reconstruction.engine import ReconstructionEngine
 from loader.scene_loader import SceneLoader
 
@@ -36,18 +35,10 @@ CAMERA_INTRINSICS_CONFIG = [
 ]
 
 
-@dataclass
-class _CameraIntrinsics:
-    K: np.ndarray
-    dist_coeff: np.ndarray
-    image_width: int
-    image_height: int
-
-
-def _build_intrinsics(config: list[dict]) -> list[_CameraIntrinsics]:
-    result: list[_CameraIntrinsics] = []
+def _build_intrinsics(config: list[dict]) -> list[CameraIntrinsics]:
+    result: list[CameraIntrinsics] = []
     for cfg in config:
-        result.append(_CameraIntrinsics(
+        result.append(CameraIntrinsics(
             K=np.array(cfg["K"], dtype=np.float64),
             dist_coeff=np.array(cfg["dist_coeff"], dtype=np.float64),
             image_width=cfg["image_width"],

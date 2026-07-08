@@ -7,14 +7,13 @@
 #        - 提供 quat_to_yaw 工具函数
 # ============================================================
 
-import math
 import logging
 
 from fastapi import APIRouter
 
-from data_pre_processing.state_estimator import StateEstimator
+from state_estimation.estimator import StateEstimator
 
-logger = logging.getLogger("data_pre_processing.kinematics")
+logger = logging.getLogger("state_estimation.router")
 
 # ── 模块级单例 ──
 estimator = StateEstimator()
@@ -99,8 +98,4 @@ async def get_estimator_stats():
 #  工具函数
 # ============================================================
 
-def quat_to_yaw(qw: float, qx: float, qy: float, qz: float) -> float:
-    """四元数 → yaw (绕 Z 轴旋转角, rad)。"""
-    siny = 2.0 * (qw * qz + qx * qy)
-    cosy = 1.0 - 2.0 * (qy * qy + qz * qz)
-    return math.atan2(siny, cosy)
+from common.transform import quat_to_yaw

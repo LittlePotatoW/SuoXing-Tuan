@@ -42,7 +42,7 @@ import threading
 
 import numpy as np
 
-from reconstruction.schemas import (
+from common.schemas import (
     FusedFrame, ReconstructionResult, MeshData, CrackAnnotation, Vector3,
 )
 

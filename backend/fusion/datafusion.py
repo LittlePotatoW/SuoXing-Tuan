@@ -17,10 +17,10 @@
 import logging
 import numpy as np
 
-from reconstruction.schemas import SensorFrame, FusedFrame, Pose6DoF, Vector3, Quaternion
-from reconstruction.transform import sensor_to_world, camera_to_world
+from common.schemas import SensorFrame, FusedFrame, Pose6DoF, Vector3, Quaternion
+from common.transform import sensor_to_world, camera_to_world
 
-logger = logging.getLogger("reconstruction.fusion")
+logger = logging.getLogger("fusion.datafusion")
 
 
 class DataFusion:
@@ -104,7 +104,7 @@ class DataFusion:
             and len(cameras_world) == len(images) == len(self.camera_intrinsics_list)
         ):
             try:
-                from reconstruction.coloring import sample_colors_from_cameras
+                from fusion.coloring import sample_colors_from_cameras
                 colors_np = sample_colors_from_cameras(
                     points_world, cameras_world, images, self.camera_intrinsics_list,
                 )

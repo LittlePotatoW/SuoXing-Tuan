@@ -18,7 +18,7 @@ from typing import Optional
 
 import numpy as np
 
-from reconstruction.schemas import (
+from common.schemas import (
     SensorFrame, PointCloudData, CarPosition, CameraView,
     Pose6DoF, Vector3, Quaternion,
 )

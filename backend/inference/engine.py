@@ -25,21 +25,7 @@ import numpy as np
 logger = logging.getLogger("inference")
 
 
-@dataclass
-class DetectionResult:
-    """检测结果 — 前后端统一格式"""
-    class_name: str
-    confidence: float
-    bbox: list[float]  # [x1, y1, x2, y2]
-
-
-@dataclass
-class InferenceResponse:
-    """推理响应"""
-    detections: list[DetectionResult] = field(default_factory=list)
-    inference_time_ms: float = 0.0
-    image_width: int = 0
-    image_height: int = 0
+from inference.schemas import DetectionResult, InferenceResponse
 
 
 class InferenceEngine:

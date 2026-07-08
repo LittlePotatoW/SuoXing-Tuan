@@ -38,7 +38,7 @@ import ReconstructionViewer from '../components/ReconstructionViewer.vue'
 import { getBaseUrl } from '../services/apiClient'
 
 const viewerRef = ref<InstanceType<typeof ReconstructionViewer> | null>(null)
-const scenePath = ref('data/test_scene')
+const scenePath = ref('test_data/test_scene')
 const loading = ref(false)
 const loaded = ref(false)
 const currentFrame = ref(0)
