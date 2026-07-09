@@ -57,6 +57,9 @@ async function loadScene() {
   loading.value = true
   const base = getBaseUrl()
 
+  // 先清空场景（不等 WS 消息，避免时序问题）
+  viewerRef.value?.resetScene()
+
   // 关闭旧 WebSocket 并创建新连接
   if (ws) { ws.onmessage = null; ws.onerror = null; ws.onclose = null; ws.close() }
   ws = new WebSocket(wsUrl())
@@ -68,6 +71,7 @@ async function loadScene() {
     switch (msg.type) {
       case 'load_started':
         totalFrames.value = msg.total_frames ?? 0
+        viewerRef.value?.resetScene()
         break
       case 'load_progress':
         currentFrame.value = msg.current_frame ?? 0
@@ -77,7 +81,7 @@ async function loadScene() {
           stats.total_points = msg.rebuild.total_points ?? 0
           stats.vertex_count = msg.rebuild.mesh?.vertex_count || 0
           stats.face_count = msg.rebuild.mesh?.face_count || 0
-          if (msg.rebuild.mesh) viewerRef.value?.updateMesh(msg.rebuild.mesh)
+          if (msg.rebuild.mesh) viewerRef.value?.addMesh(msg.rebuild.mesh)
           if (msg.rebuild.camera_trail) viewerRef.value?.updateTrail(msg.rebuild.camera_trail)
         }
         break
@@ -88,7 +92,7 @@ async function loadScene() {
           stats.total_points = d.total_points ?? 0
           stats.vertex_count = d.mesh?.vertex_count || 0
           stats.face_count = d.mesh?.face_count || 0
-          if (d.mesh) viewerRef.value?.updateMesh(d.mesh)
+          if (d.mesh) viewerRef.value?.addMesh(d.mesh)
           if (d.camera_trail) viewerRef.value?.updateTrail(d.camera_trail)
         }
         break

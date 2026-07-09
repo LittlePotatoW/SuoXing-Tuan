@@ -37,6 +37,7 @@ class SceneLoader:
         self._frames: list[dict] = []    # [{ply_path, pose}]
         self._index = 0
         self._running = False
+        self._paused = False
         self._task: Optional[asyncio.Task] = None
 
         self._scan()
@@ -193,13 +194,16 @@ class SceneLoader:
 
     # ── 回放控制 ──
 
-    async def run(self, interval: float = 0.05, on_frame=None, on_complete=None):
+    async def run(self, interval: float = 0.05, on_frame=None, on_complete=None,
+                  from_beginning: bool = True):
         """逐帧回放：加载 → 回调 on_frame → 等待 interval"""
         self._running = True
-        self._index = 0
+        self._paused = False
+        if from_beginning:
+            self._index = 0
 
         try:
-            for i in range(len(self._frames)):
+            for i in range(self._index, len(self._frames)):
                 if not self._running:
                     break
                 self._index = i
@@ -209,14 +213,16 @@ class SceneLoader:
                 await asyncio.sleep(interval)
         finally:
             self._running = False
-            if on_complete:
+            if on_complete and not self._paused:
                 await on_complete()
 
     def pause(self):
         self._running = False
+        self._paused = True
 
     def resume(self):
         self._running = True
+        self._paused = False
 
     def stop(self):
         self._running = False

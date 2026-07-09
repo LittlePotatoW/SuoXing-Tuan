@@ -94,7 +94,7 @@ function loop() {
 
 // ── 外部方法 ──
 
-function updateMesh(data: { vertices: number[]; faces: number[]; vertex_count: number; face_count: number; vertex_colors?: number[] } | null) {
+function resetScene() {
   meshGroup.traverse((child) => {
     if (child instanceof THREE.Mesh) {
       child.geometry?.dispose()
@@ -106,6 +106,10 @@ function updateMesh(data: { vertices: number[]; faces: number[]; vertex_count: n
     }
   })
   meshGroup.clear()
+  trailGroup.clear()
+}
+
+function addMesh(data: { vertices: number[]; faces: number[]; vertex_count: number; face_count: number; vertex_colors?: number[] } | null) {
   if (!data || !data.vertices.length) return
 
   const geo = new THREE.BufferGeometry()
@@ -117,7 +121,6 @@ function updateMesh(data: { vertices: number[]; faces: number[]; vertex_count: n
     geo.computeVertexNormals()
   }
 
-  // 顶点颜色
   if (data.vertex_colors && data.vertex_colors.length === data.vertex_count * 3) {
     const colors = new Uint8Array(data.vertex_colors)
     geo.setAttribute('color', new THREE.BufferAttribute(colors, 3, true))
@@ -132,7 +135,6 @@ function updateMesh(data: { vertices: number[]; faces: number[]; vertex_count: n
   const mesh = new THREE.Mesh(geo, mat)
   meshGroup.add(mesh)
 
-  // 线框叠加，方便辨认几何结构
   const wireMat = new THREE.MeshBasicMaterial({ color: 0x666666, wireframe: true })
   const wire = new THREE.Mesh(geo, wireMat)
   meshGroup.add(wire)
@@ -148,5 +150,5 @@ function updateTrail(trail: number[][] | null) {
   trailGroup.add(new THREE.Line(geo, mat))
 }
 
-defineExpose({ updateMesh, updateTrail })
+defineExpose({ addMesh, updateTrail, resetScene })
 </script>

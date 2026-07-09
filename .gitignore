@@ -50,6 +50,7 @@ relay/
 backend/tests/output/*
 backend/tests/fixtures/
 backend/test_data
+test_end/
 
 # 训练数据集（本地管理，不入仓库）
 model-training/yolo-training/datasets/*/

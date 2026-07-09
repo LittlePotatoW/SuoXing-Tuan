@@ -185,6 +185,11 @@ class ReconstructionEngine:
                     )
                 self._status = "completed"
                 self._last_rebuild_at_frame = frame_count
+
+                # 重建后清空累积块：增量模式，每段独立
+                self._point_blocks = []
+                self._color_blocks = []
+                self._total_points = 0
                 v = self._latest_mesh.vertex_count if self._latest_mesh else 0
                 f = self._latest_mesh.face_count if self._latest_mesh else 0
 
@@ -206,6 +211,7 @@ class ReconstructionEngine:
         import open3d as o3d
 
         has_color = colors is not None and len(colors) == len(points)
+        _t = time.perf_counter
 
         # 1. 创建点云（可选颜色）
         pcd = o3d.geometry.PointCloud()
@@ -232,6 +238,7 @@ class ReconstructionEngine:
             pcd_for_colors.colors = o3d.utility.Vector3dVector(np.asarray(pcd.colors))
 
         # 4. 估算法线
+        t0 = _t()
         pcd.estimate_normals(
             o3d.geometry.KDTreeSearchParamHybrid(
                 radius=self.voxel_size * 5, max_nn=30
@@ -245,15 +252,20 @@ class ReconstructionEngine:
         mesh, densities = o3d.geometry.TriangleMesh.create_from_point_cloud_poisson(
             pcd, depth=POISSON_DEPTH, width=0, scale=1.1, linear_fit=False
         )
+        t1 = _t()
 
         # 7. 去低密度伪面
         threshold = np.quantile(densities, DENSITY_FILTER_PERCENTILE)
         mesh.remove_vertices_by_mask(densities < threshold)
 
-        # 8. 颜色传递: 参考点云最近邻 → Mesh 顶点
+        # 8. 颜色传递: 参考点云 K 近邻加权 → Mesh 顶点
         if pcd_for_colors is not None and len(mesh.vertices) > 0:
-            self._transfer_colors_to_mesh(mesh, pcd_for_colors)
+            self._transfer_colors_to_mesh(mesh, pcd_for_colors, k=2)
+        t2 = _t()
 
+        logger.info("Rebuild timing: Poisson=%.0fms color=%.0fms pts=%d verts=%d",
+                     (t1 - t0) * 1000, (t2 - t1) * 1000,
+                     len(pcd.points), len(mesh.vertices))
         return mesh
 
     # ================================================================
@@ -278,20 +290,23 @@ class ReconstructionEngine:
 
     @staticmethod
     def _transfer_colors_to_mesh(mesh, pcd_colored, k: int = 5):
-        """K 近邻距离加权: 将参考点云颜色平滑传递到 Mesh 顶点。"""
+        """K 近邻距离加权: 将参考点云颜色平滑传递到 Mesh 顶点（scipy 批量查询）。"""
         import open3d as o3d
+        from scipy.spatial import KDTree
 
-        kdtree = o3d.geometry.KDTreeFlann(pcd_colored)
         verts = np.asarray(mesh.vertices)
+        pts = np.asarray(pcd_colored.points)
         colors_src = np.asarray(pcd_colored.colors)
 
-        vertex_colors = np.zeros((len(verts), 3), dtype=np.float64)
-        for i in range(len(verts)):
-            _, idx, dist2 = kdtree.search_knn_vector_3d(verts[i], k)
-            # 距离平方倒数加权
-            weights = 1.0 / np.maximum(np.asarray(dist2), 1e-12)
-            weights /= weights.sum()
-            for j in range(k):
-                vertex_colors[i] += weights[j] * colors_src[idx[j]]
+        tree = KDTree(pts)
+        dists, indices = tree.query(verts, k=min(k, len(pts)))
+        # dists: (V, K), indices: (V, K)
+
+        if k == 1:
+            vertex_colors = colors_src[indices]
+        else:
+            weights = 1.0 / np.maximum(dists, 1e-12)  # (V, K)
+            weights /= weights.sum(axis=1, keepdims=True)
+            vertex_colors = np.sum(colors_src[indices] * weights[..., np.newaxis], axis=1)
 
         mesh.vertex_colors = o3d.utility.Vector3dVector(vertex_colors)

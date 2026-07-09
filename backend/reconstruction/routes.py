@@ -162,22 +162,32 @@ async def control_playback(payload: dict):
     if action == "pause":
         _loader.pause()
     elif action == "resume":
+        # 从下一帧开始（当前帧已处理）
+        _loader.seek(_loader.current_index + 1)
+
         async def on_frame(frame, idx):
             loop = asyncio.get_running_loop()
 
             def _process():
                 fused = fusion.process(frame)
-                if fused:
-                    engine.add_frame(fused)
+                if fused is None:
+                    return None
+                engine.add_frame(fused)
+                return engine.get_result()
 
-            await loop.run_in_executor(None, _process)
-            asyncio.create_task(_broadcast({
-                "type": "load_progress", "current_frame": idx + 1, "total_frames": _loader.total_frames
-            }))
+            result = await loop.run_in_executor(None, _process)
+            if result is None:
+                return
+            msg = {"type": "load_progress", "current_frame": idx + 1, "total_frames": _loader.total_frames}
+            if result.status == "completed":
+                msg["rebuild"] = result.model_dump()
+            asyncio.create_task(_broadcast(msg))
+
         async def on_complete():
-            asyncio.create_task(_broadcast({"type": "load_complete"}))
+            asyncio.create_task(_broadcast({"type": "load_complete", "total_frames": _loader.total_frames}))
         _loader.resume()
-        asyncio.create_task(_loader.run(interval=0.05, on_frame=on_frame, on_complete=on_complete))
+        asyncio.create_task(_loader.run(interval=0.05, on_frame=on_frame, on_complete=on_complete,
+                                        from_beginning=False))
     elif action == "stop":
         _loader.stop()
     elif action == "seek":
