@@ -29,6 +29,7 @@ const route = useRoute()
 const items = [
   { path: '/', label: '2D 检测', name: 'detection' },
   { path: '/reconstruction', label: '3D 重建', name: 'reconstruction' },
+  { path: '/realtime', label: '实时融合', name: 'realtime' },
   { path: '/page2', label: 'Page 2', name: 'page2' },
   { path: '/page3', label: 'Page 3', name: 'page3' },
   { path: '/page4', label: 'Page 4', name: 'page4' },

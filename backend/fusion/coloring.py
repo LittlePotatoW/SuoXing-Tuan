@@ -16,6 +16,14 @@ def decode_image(image_bytes: bytes) -> Optional[np.ndarray]:
     from io import BytesIO
     from PIL import Image
 
+    # Pydantic bytes 字段不自动解码 base64, 需手动处理
+    if image_bytes[:2] != b'\xff\xd8':  # not JPEG header
+        import base64
+        try:
+            image_bytes = base64.b64decode(image_bytes)
+        except Exception:
+            pass
+
     try:
         pil_img = Image.open(BytesIO(image_bytes)).convert("RGB")
         img = np.array(pil_img)  # (H, W, 3) RGB

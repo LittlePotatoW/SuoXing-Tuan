@@ -100,6 +100,14 @@ async def get_status():
     return {"status": r.status, "total_frames": r.total_frames, "total_points": r.total_points}
 
 
+@router.post("/reset")
+async def reset_engine():
+    """清空重建数据，重新开始。"""
+    global engine
+    engine = ReconstructionEngine()
+    return {"status": "ok"}
+
+
 # ============================================================
 # 文件夹回放 (离线模式)
 # ============================================================

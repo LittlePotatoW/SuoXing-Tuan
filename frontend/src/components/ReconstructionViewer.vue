@@ -20,6 +20,7 @@ let renderer: THREE.WebGLRenderer
 let controls: OrbitControls
 let meshGroup: THREE.Group
 let trailGroup: THREE.Group
+let crackGroup: THREE.Group
 let animId = 0
 let disposed = false
 
@@ -48,6 +49,9 @@ onMounted(() => {
 
   trailGroup = new THREE.Group()
   scene.add(trailGroup)
+
+  crackGroup = new THREE.Group()
+  scene.add(crackGroup)
 
   // 参考网格 + 坐标轴
   scene.add(new THREE.GridHelper(5, 20, 0x444444, 0x333333))
@@ -150,5 +154,22 @@ function updateTrail(trail: number[][] | null) {
   trailGroup.add(new THREE.Line(geo, mat))
 }
 
-defineExpose({ addMesh, updateTrail, resetScene })
+function addCracks(cracks: { position: { x: number; y: number; z: number }; confidence: number; crack_type: string }[]) {
+  crackGroup.clear()
+  if (!cracks || !cracks.length) return
+
+  for (const c of cracks) {
+    const size = 0.03 + c.confidence * 0.04
+    const geo = new THREE.SphereGeometry(size, 8, 8)
+    const color = c.crack_type === '裂缝' || c.crack_type === 'crack' ? 0xef5350
+      : c.crack_type === '渗漏' || c.crack_type === 'leakage' ? 0x42a5f5
+      : 0xffa726
+    const mat = new THREE.MeshBasicMaterial({ color })
+    const sphere = new THREE.Mesh(geo, mat)
+    sphere.position.set(c.position.x, c.position.y, c.position.z)
+    crackGroup.add(sphere)
+  }
+}
+
+defineExpose({ addMesh, updateTrail, resetScene, addCracks })
 </script>

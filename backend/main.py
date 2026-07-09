@@ -32,6 +32,7 @@ from inference.engine import InferenceEngine
 from inference.schemas import InferenceResponse, DetectionResult
 from reconstruction.routes import router as reconstruction_router
 from state_estimation.router import router as preprocessing_router
+from realtime.fusion_router import router as realtime_router, set_inference_engine
 
 # ==================== 配置 ====================
 
@@ -73,13 +74,15 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=os.getenv("SX_CORS_ORIGINS", "http://localhost:5173,http://localhost:5174").split(","),
-    allow_methods=["GET", "POST"],
+    allow_origins=["*"],
+    allow_methods=["*"],
     allow_headers=["*"],
 )
 
 app.include_router(reconstruction_router)
 app.include_router(preprocessing_router)
+app.include_router(realtime_router)
+set_inference_engine(engine)
 
 # ==================== 请求追踪中间件 ====================
 

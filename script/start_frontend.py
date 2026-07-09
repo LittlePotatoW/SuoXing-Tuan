@@ -21,9 +21,11 @@ def start():
     print(f"启动前端: {FRONTEND_DIR}")
     print("Vite 开发服务器: http://localhost:5173")
 
-    subprocess.run(
+    subprocess.Popen(
         ["npx", "vite", "--host", "localhost", "--port", "5173"],
         shell=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
     )
 
 if __name__ == "__main__":

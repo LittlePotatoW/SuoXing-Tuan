@@ -90,6 +90,14 @@ async def get_estimator_stats():
     }
 
 
+@router.post("/reset")
+async def reset_estimator():
+    """重置航迹推算状态。"""
+    global estimator
+    estimator = StateEstimator()
+    return {"status": "ok"}
+
+
 # ============================================================
 #  工具函数
 # ============================================================
