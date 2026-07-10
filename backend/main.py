@@ -33,6 +33,7 @@ from inference.schemas import InferenceResponse, DetectionResult
 from reconstruction.routes import router as reconstruction_router
 from state_estimation.router import router as preprocessing_router
 from realtime.fusion_router import router as realtime_router, set_inference_engine
+from debug.routes import router as debug_router
 
 # ==================== 配置 ====================
 
@@ -82,6 +83,7 @@ app.add_middleware(
 app.include_router(reconstruction_router)
 app.include_router(preprocessing_router)
 app.include_router(realtime_router)
+app.include_router(debug_router)
 set_inference_engine(engine)
 
 # ==================== 请求追踪中间件 ====================
