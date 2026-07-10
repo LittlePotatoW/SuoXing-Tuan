@@ -65,23 +65,21 @@ class InferenceEngine:
 
         logger.info("Loading model: %s", model_path)
 
+        # 先加载新模型再替换旧模型，失败时保留旧模型
+        new_model = YOLO(model_path)
+
         with self._lock:
-            # 卸载旧模型（先删再建，失败也会清理干净）
-            if self._model is not None:
-                del self._model
-                self._model = None
-                self._class_names = []
-                self._model_path = ""
-                self._model_name = ""
+            old_model = self._model
+            self._model = new_model
+            self._model_path = str(model_path)
+            self._model_name = Path(model_path).stem
+
+            if old_model is not None:
+                del old_model
                 if self._has_cuda():
                     import torch
                     torch.cuda.empty_cache()
                 gc.collect()
-
-            new_model = YOLO(model_path)
-            self._model = new_model
-            self._model_path = str(model_path)
-            self._model_name = Path(model_path).stem
 
             # 读取类别名
             if hasattr(self._model, "names"):

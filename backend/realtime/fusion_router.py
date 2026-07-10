@@ -61,15 +61,7 @@ async def toggle(payload: dict):
 async def feed_location(payload: dict):
     global location_count
     try:
-        ts = payload.get("timestamp_ns", 0)
-        car = payload.get("car", {})
-        kin = car.get("kinematics", {})
-        if kin:
-            estimator.update_kinematics(
-                velocity=float(kin.get("velocity", 0)),
-                steering_angle=float(kin.get("steering_angle", 0)),
-                timestamp_ns=ts,
-            )
+        # feed_location_data 内部已调用 StateEstimator.update_kinematics()，此处不重复
         fusion_manager.feed_location_data(payload)
         location_count += 1
         return {"status": "ok", "count": location_count}
@@ -154,19 +146,32 @@ def _build_sensor_frame(final: dict, ts: int):
 
 
 def _run_yolo(final: dict, eng) -> int:
-    from fusion.coloring import decode_image
+    import numpy as np
+    from PIL import Image
+    from io import BytesIO
     from reconstruction.projector import DefectProjector
+
+    def _decode_rgb(image_data):
+        """解码 image bytes → RGB numpy array (与 main.py REST 推理路径一致)。"""
+        try:
+            pil_img = Image.open(BytesIO(image_data)).convert("RGB")
+            return np.array(pil_img)
+        except Exception:
+            return None
+
     proj = DefectProjector()
     hits = 0
     car_pose = final["car_position"]["pose"]
     car_world = {"position": car_pose["position"], "rotation": car_pose["rotation"]}
     for idx, cv in enumerate(final.get("camera_views", [])):
         if not cv.get("image_data"): continue
-        img = decode_image(cv["image_data"])
+        img = _decode_rgb(cv["image_data"])
         if img is None: continue
         try:
             res = _inference_engine.infer(img)
-        except: continue
+        except Exception as exc:
+            logger.warning("YOLO inference failed for camera %d: %s", idx, exc)
+            continue
         if not res or not res.detections: continue
         for det in res.detections:
             x1, y1, x2, y2 = det.bbox

@@ -99,6 +99,7 @@ function loop() {
 // ── 外部方法 ──
 
 function resetScene() {
+  // 清理 meshGroup（geometry + material）
   meshGroup.traverse((child) => {
     if (child instanceof THREE.Mesh) {
       child.geometry?.dispose()
@@ -110,11 +111,39 @@ function resetScene() {
     }
   })
   meshGroup.clear()
+
+  // 清理 crackGroup
+  crackGroup.traverse((child) => {
+    if (child instanceof THREE.Mesh) {
+      child.geometry?.dispose()
+      if (Array.isArray(child.material)) {
+        child.material.forEach(m => m.dispose())
+      } else {
+        child.material?.dispose()
+      }
+    }
+  })
+  crackGroup.clear()
+
+  // 清理 trailGroup
+  trailGroup.traverse((child) => {
+    if (child instanceof THREE.Line) {
+      child.geometry?.dispose()
+      if (Array.isArray(child.material)) {
+        child.material.forEach(m => m.dispose())
+      } else {
+        child.material?.dispose()
+      }
+    }
+  })
   trailGroup.clear()
 }
 
 function addMesh(data: { vertices: number[]; faces: number[]; vertex_count: number; face_count: number; vertex_colors?: number[] } | null) {
   if (!data || !data.vertices.length) return
+
+  // 先清理旧 mesh，防止 GPU 内存泄漏
+  resetScene()
 
   const geo = new THREE.BufferGeometry()
   const verts = new Float32Array(data.vertices)
@@ -139,8 +168,10 @@ function addMesh(data: { vertices: number[]; faces: number[]; vertex_count: numb
   const mesh = new THREE.Mesh(geo, mat)
   meshGroup.add(mesh)
 
+  // 线框用独立 geometry 拷贝，避免与实体 mesh 共享导致 dispose 冲突
+  const wireGeo = geo.clone()
   const wireMat = new THREE.MeshBasicMaterial({ color: 0x666666, wireframe: true })
-  const wire = new THREE.Mesh(geo, wireMat)
+  const wire = new THREE.Mesh(wireGeo, wireMat)
   meshGroup.add(wire)
 }
 

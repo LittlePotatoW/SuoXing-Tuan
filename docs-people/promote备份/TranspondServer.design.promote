@@ -1,0 +1,32 @@
+# 服务端功能与架构
+服务端是中转站，接收硬件数据，进行简单处理，控制端和服务器建立连接，从服务器获取信息
+
+# 服务器要提供的接口：
+## 接收（POST）:
+1.接收小车检测端传来的带时间戳的数据包，内有激光雷达和图像的数据
+（参考docs-people\数据包格式\detection_data.md）
+2.接收小车运动端传来的带时间戳的数据包，内有小车的运动学参数
+（参考docs-people\数据包格式\lacation_data.md）
+3.接收控制端的调试指令
+（待设计）
+## 发送（GET）:
+1.获取服务器器目前存有的数据量
+2.获取所有detection_data
+3.获取所有lacation_data
+4.获取XXX（时间）之后的detection_data
+5.获取XXX（时间）之后的lacation_data
+6.获取近XX（份）detection_data数据
+7.获取近XX（份）lacation_data数据
+8.建立连接，持续获取现在以后的detection_data数据
+9.建立连接，持续获取现在以后的lacation_data数据
+10.建立连接，持续获取现在以后的detection_data数据和lacation_data
+
+特别的，以上提到的detection_data和lacation_data，在发送时，均可以将多份数据封装成一个数据包
+（参考docs-people\数据包格式\new_detection_data.md）
+
+# 服务端可以调节的参数
+1.存储设置，比如“最大存储量”超过多少条数据后，删除最久远的
+2.开放端口
+
+# 接收控制端的调试指令
+待设计

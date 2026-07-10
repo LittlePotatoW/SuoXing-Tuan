@@ -1,70 +1,58 @@
-# 后端设计文档
+# 控制端设计文档
 
-## 1. 概述
-
-后端是平台的"计算核心"。V1 阶段只负责 **AI 推理**（缺陷检测）。三维重建在 V2 实现。
-
-**核心原则**：前端是纯展示层，不加载模型、不运行推理。所有计算都在后端完成。
-
-## 2. 技术选型
-
-| 技术 | 用途 |
-|------|------|
-| Python 3.10+ | 主语言 |
-| FastAPI | API 网关 (REST + WebSocket) |
-| Ultralytics YOLO | 推理引擎 (支持 .pt / .onnx / .engine) |
-| NumPy / Pillow | 图像处理 |
-
-## 3. 目录结构（V1 极简）
+## 目录结构
 
 ```
 backend/
-├── main.py           # FastAPI 应用（全部路由 + WebSocket 都在这一个文件）
-├── inference.py      # YOLO 推理引擎（加载、推理、卸载）
-├── requirements.txt  # Python 依赖
-└── models/           # 上传的 .pt 模型文件存放（gitignored）
+├── main.py                          # FastAPI 入口
+├── common/                          # 共享基础库
+│   ├── schemas.py                   # Pydantic 数据模型
+│   ├── transform.py                 # 坐标变换数学工具
+│   ├── camera.py                    # 相机内参/外参
+│   └── projection.py               # 投影/反投影函数
+├── inference/                       # AI 推理
+│   ├── engine.py                    # YOLO InferenceEngine
+│   └── schemas.py                   # DetectionResult
+├── fusion/                          # 数据融合
+│   ├── datafusion.py               # SensorFrame→FusedFrame
+│   ├── coloring.py                  # 点云颜色采样
+│   └── manager.py                   # DataFusionManager
+├── reconstruction/                  # 三维重建
+│   ├── engine.py                    # Poisson 重建引擎
+│   ├── routes.py                    # /api/reconstruction/*
+│   ├── projector.py                 # DefectProjector
+│   └── defect_table.py             # 缺陷汇总
+├── state_estimation/                # 航迹推算
+│   ├── estimator.py                 # StateEstimator (自行车模型)
+│   └── router.py                    # /api/preprocessing/*
+├── realtime/                        # 实时融合
+│   ├── fusion_router.py            # 调度层 API
+│   └── preprocessor.py             # 预处理 (占位)
+├── loader/                          # 离线数据
+│   └── scene_loader.py             # SceneLoader
+├── models/                          # .pt 模型文件 (gitignored)
+├── test_data/                       # 测试数据 (gitignored)
+└── tests/                           # 测试
 ```
 
-后续功能增加时再拆分目录。
-
-## 4. API 设计
+## API 端点
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| GET | `/api/health` | 健康检查 + 已加载模型信息 |
-| POST | `/api/inference` | 上传图片，后端推理，返回检测结果 |
-| POST | `/api/model/load` | 上传 .pt 文件，后端热加载模型 |
-| WS | `/ws/realtime` | WebSocket 实时通信 |
-
-### 推理请求流程
-
-```
-前端 POST /api/inference (image file)
-  → 后端读取图片 → numpy 数组 (BGR)
-  → engine.infer(image_array)
-  → 返回 InferenceResponse JSON
-```
-
-### 模型热加载流程
-
-```
-前端 POST /api/model/load (model file)
-  → 后端保存到 models/ 目录
-  → engine.load(model_path)  # 自动卸载旧模型
-  → 返回加载状态
-```
-
-## 5. 推理引擎
-
-`inference.py` 中的 `InferenceEngine` 类：
-- `load(path, conf, iou)` — 加载模型（拔插式：自动卸载旧模型）
-- `infer(image_array)` — 推理单张图像，返回 `InferenceResponse`
-- `unload()` — 卸载模型释放显存
-- 支持 .pt / .onnx / .engine 格式
-
-## 6. V2 计划
-
-- 多模型注册表（同时管理多个引擎）
-- 三维重建引擎 (Gaussian Splatting)
-- 硬件通信层（工业相机、激光雷达接入）
-- 内部消息队列解耦
+| GET | `/api/health` | 健康检查 |
+| POST | `/api/inference` | YOLO 图像推理 |
+| POST | `/api/model/load` | 模型热加载 |
+| POST | `/api/reconstruction/frame` | 上传单帧 SensorFrame |
+| GET | `/api/reconstruction/result` | 获取重建结果 |
+| GET | `/api/reconstruction/status` | 重建状态 |
+| POST | `/api/reconstruction/load` | 加载离线场景 |
+| POST | `/api/reconstruction/control` | 回放控制 (pause/resume/stop/seek) |
+| POST | `/api/reconstruction/reset` | 重置重建引擎 |
+| WS | `/api/reconstruction/ws` | 重建结果实时推送 |
+| POST | `/api/preprocessing/kinematics` | 运动学参数 |
+| GET | `/api/preprocessing/estimator/stats` | 状态估计器统计 |
+| POST | `/api/preprocessing/reset` | 重置航迹推算 |
+| POST | `/api/realtime/feed/location` | 喂入定位数据 |
+| POST | `/api/realtime/feed/detection` | 喂入检测数据 |
+| GET | `/api/realtime/status` | 实时融合状态 |
+| POST | `/api/realtime/toggle` | 开关 YOLO/重建 |
