@@ -207,9 +207,9 @@ watch(relayInterval, () => {
   }
 })
 
-// 启动时自动开始轮询
+// 启动时自动开始轮询（仅主动模式）
 watch(running, (v) => {
-  if (v) {
+  if (v && mode.value === 'active') {
     activePoll()
     relayTimer = setInterval(activePoll, relayInterval.value)
   } else {
