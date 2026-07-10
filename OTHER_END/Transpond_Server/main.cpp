@@ -3,6 +3,7 @@
 #include <thread>
 #include <chrono>
 #include <cstring>
+#include <ctime>
 #include "handlers.h"
 
 using namespace std::chrono_literals;
@@ -44,18 +45,70 @@ int main(int argc, char* argv[]) {
     });
 
     // ── WebSocket /stream ──
-    svr.Get("/stream", [state](const httplib::Request& req, httplib::Response& res) {
-        std::string mode = req.get_param_value("mode");  // "all", "location", "sensor"
-        bool send_all = mode.empty() || mode == "all";
-        bool send_loc = send_all || mode == "location";
-        bool send_sensor = send_all || mode == "sensor";
+    svr.WebSocket("/stream", [state](const httplib::Request& req, httplib::ws::WebSocket& ws) {
+        std::string mode = req.get_param_value("mode");
+        bool send_loc = mode.empty() || mode == "all" || mode == "location";
+        bool send_sensor = mode.empty() || mode == "all" || mode == "sensor";
 
-        res.set_header("Connection", "Upgrade");
-        res.set_header("Upgrade", "websocket");
-        res.status = 101; // Switching Protocols
+        auto now = std::time(nullptr);
+        char time_buf[32];
+        std::strftime(time_buf, sizeof(time_buf), "%H:%M:%S", std::localtime(&now));
+        printf("[%s] WS  client connected, mode=%s\n", time_buf,
+               mode.empty() ? "all" : mode.c_str());
 
-        // 用 httplib 的 WebSocket 连接
-        // httplib 在 response 设置 Upgrade 后自动升级
+        uint64_t last_loc_ts = 0;
+        uint64_t last_sensor_ts = 0;
+
+        while (ws.is_open()) {
+            std::string loc_json, sen_json;
+
+            {
+                std::lock_guard<std::mutex> lk(state->mtx);
+
+                if (send_loc) {
+                    auto items = state->loc_store.query(last_loc_ts, 0);
+                    if (!items.empty()) {
+                        json arr = json::array();
+                        for (auto p : items) {
+                            arr.push_back(*p);
+                            if (p->timestamp_ns > last_loc_ts)
+                                last_loc_ts = p->timestamp_ns;
+                        }
+                        json msg;
+                        msg["type"] = "location";
+                        msg["count"] = arr.size();
+                        msg["frames"] = std::move(arr);
+                        loc_json = msg.dump();
+                    }
+                }
+
+                if (send_sensor) {
+                    auto items = state->sensor_store.query(last_sensor_ts, 0);
+                    if (!items.empty()) {
+                        json arr = json::array();
+                        for (auto p : items) {
+                            arr.push_back(*p);
+                            if (p->timestamp_ns > last_sensor_ts)
+                                last_sensor_ts = p->timestamp_ns;
+                        }
+                        json msg;
+                        msg["type"] = "sensor";
+                        msg["count"] = arr.size();
+                        msg["frames"] = std::move(arr);
+                        sen_json = msg.dump();
+                    }
+                }
+            }
+
+            if (!loc_json.empty()) ws.send(loc_json);
+            if (!sen_json.empty()) ws.send(sen_json);
+
+            std::this_thread::sleep_for(200ms);
+        }
+
+        now = std::time(nullptr);
+        std::strftime(time_buf, sizeof(time_buf), "%H:%M:%S", std::localtime(&now));
+        printf("[%s] WS  client disconnected\n", time_buf);
     });
 
     std::cout << "TranspondServer starting on 0.0.0.0:" << port << std::endl;

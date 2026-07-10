@@ -1,8 +1,15 @@
 #include "handlers.h"
+#include <ctime>
+#include <cstdio>
 
 // ── POST /location ──
 
 void handle_post_location(const httplib::Request& req, httplib::Response& res, AppState& state) {
+    auto now = std::time(nullptr);
+    char buf[32];
+    std::strftime(buf, sizeof(buf), "%H:%M:%S", std::localtime(&now));
+    printf("[%s] POST /location  body=%zu bytes\n", buf, req.body.size());
+
     try {
         auto j = json::parse(req.body);
         LocationData loc = j.get<LocationData>();
@@ -20,6 +27,11 @@ void handle_post_location(const httplib::Request& req, httplib::Response& res, A
 // ── POST /frames ──
 
 void handle_post_frames(const httplib::Request& req, httplib::Response& res, AppState& state) {
+    auto now = std::time(nullptr);
+    char buf[32];
+    std::strftime(buf, sizeof(buf), "%H:%M:%S", std::localtime(&now));
+    printf("[%s] POST /frames  body=%zu bytes\n", buf, req.body.size());
+
     try {
         auto j = json::parse(req.body);
         SensorBatch batch = j.get<SensorBatch>();
@@ -44,6 +56,11 @@ void handle_post_debug(const httplib::Request& req, httplib::Response& res, AppS
         action = j.value("action", "");
     } catch (...) {}
 
+    auto now = std::time(nullptr);
+    char buf[32];
+    std::strftime(buf, sizeof(buf), "%H:%M:%S", std::localtime(&now));
+    printf("[%s] POST /debug  action=%s\n", buf, action.empty() ? "status" : action.c_str());
+
     if (action == "clear") {
         std::lock_guard<std::mutex> lk(state.mtx);
         state.loc_store.clear();
@@ -63,6 +80,11 @@ void handle_post_debug(const httplib::Request& req, httplib::Response& res, AppS
 // ── GET /status ──
 
 void handle_get_status(const httplib::Request&, httplib::Response& res, AppState& state) {
+    auto now = std::time(nullptr);
+    char buf[32];
+    std::strftime(buf, sizeof(buf), "%H:%M:%S", std::localtime(&now));
+    printf("[%s] GET  /status\n", buf);
+
     size_t lc, sc;
     {
         std::lock_guard<std::mutex> lk(state.mtx);
@@ -88,6 +110,12 @@ static size_t param_limit(const httplib::Request& req) {
 void handle_get_location(const httplib::Request& req, httplib::Response& res, AppState& state) {
     auto after = param_after(req);
     auto limit = param_limit(req);
+
+    auto now = std::time(nullptr);
+    char buf[32];
+    std::strftime(buf, sizeof(buf), "%H:%M:%S", std::localtime(&now));
+    printf("[%s] GET  /location  after=%llu limit=%zu\n", buf,
+           (unsigned long long)after, limit);
     json frames = json::array();
     {
         std::lock_guard<std::mutex> lk(state.mtx);
@@ -102,6 +130,12 @@ void handle_get_location(const httplib::Request& req, httplib::Response& res, Ap
 void handle_get_sensor(const httplib::Request& req, httplib::Response& res, AppState& state) {
     auto after = param_after(req);
     auto limit = param_limit(req);
+
+    auto now = std::time(nullptr);
+    char buf[32];
+    std::strftime(buf, sizeof(buf), "%H:%M:%S", std::localtime(&now));
+    printf("[%s] GET  /sensor   after=%llu limit=%zu\n", buf,
+           (unsigned long long)after, limit);
     json frames = json::array();
     {
         std::lock_guard<std::mutex> lk(state.mtx);
