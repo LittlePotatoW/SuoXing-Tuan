@@ -250,3 +250,18 @@ time ─────────────────────────
   WebSocket 收到 rebuild_complete → 3D 模型更新
   GET /realtime/status 每秒轮询 → 状态栏刷新
 ```
+
+---
+
+## 主动模式 — 数据中继站 (TranspondServer)
+
+主动模式不依赖模拟器推送，前端直接从中继站拉取数据。
+
+```
+硬件 ──→ TranspondServer (:8001) ←── 控制端主动拉取
+         POST /location               GET /location?limit=10
+         POST /frames                 GET /sensor?limit=20
+         WS /stream (可选)            WS /stream (实时推送)
+```
+
+中继站 API 详见 [OTHER_END/Transpond_Server/API.md](../OTHER_END/Transpond_Server/API.md)。

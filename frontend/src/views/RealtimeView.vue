@@ -159,7 +159,7 @@ async function activePoll() {
   try {
     // 拉取定位数据 (测试定位模式跳过)
     if (!fakeLocOn.value) {
-      const locR = await fetch(base + '/location/latest')
+      const locR = await fetch(base + '/location?limit=10')
       if (locR.ok) {
         const locData = await locR.json()
         const locFrames = locData.frames || []
@@ -173,8 +173,9 @@ async function activePoll() {
       }
     }
 
-    // 拉取传感器数据
-    const detR = await fetch(base + '/sensor/latest')
+    // 拉取传感器数据 (按时间过滤)
+    const detUrl = base + '/sensor?limit=20'
+    const detR = await fetch(detUrl)
     if (detR.ok) {
       const detData = await detR.json()
       const detFrames = detData.frames || []
