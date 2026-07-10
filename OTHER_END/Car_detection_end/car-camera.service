@@ -1,0 +1,16 @@
+[Unit]
+Description=Car Detection End - LiDAR + Camera Data Collection
+After=network.target
+
+[Service]
+Type=simple
+User=jetson
+WorkingDirectory=/home/jetson/Car_detection_end
+ExecStart=/home/jetson/Car_detection_end/build/car_detection --host 192.168.1.100 --port 8001
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
