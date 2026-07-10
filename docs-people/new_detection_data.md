@@ -101,7 +101,7 @@ Content-Type: application/json
 | `position.y` | float | Y 坐标 |
 | `position.z` | float | Z 坐标 |
 | `rotation.qw` | float | 四元数实部 |
-| `rotation.qx` | float | 四元数 X |
+| `rotation.qx` | float | 四元数 X | 
 | `rotation.qy` | float | 四元数 Y |
 | `rotation.qz` | float | 四元数 Z |
 
