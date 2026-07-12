@@ -18,6 +18,10 @@
     <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">
       <button @click="doTest" style="background:#555;color:#fff;border:none;padding:2px 8px;font-size:10px;cursor:pointer;border-radius:3px">连接测试</button>
       <span v-if="testResult !== null" style="font-size:10px" :style="{color: testResult ? '#4CAF50' : '#f44336'}">{{ testResult ? '✓ 可达' : '✗ 不可达' }}</span>
+      <span style="color:#888;font-size:10px;margin-left:8px">超时</span>
+      <input type="number" min="5" max="300" :value="timeout" @input="$emit('update:timeout', +($event.target as HTMLInputElement).value)"
+        style="width:45px;background:#1a1a1a;color:#ccc;border:1px solid #555;padding:2px 4px;font-size:10px" />
+      <span style="color:#888;font-size:10px">秒</span>
     </div>
 
     <!-- 范围类型选择 -->
@@ -95,6 +99,7 @@ const props = defineProps<{
   endN: number
   startMin: number
   endMin: number
+  timeout: number
   loaded: boolean
   locCount: number
   detCount: number
@@ -110,6 +115,7 @@ defineEmits<{
   'update:endN': [v: number]
   'update:startMin': [v: number]
   'update:endMin': [v: number]
+  'update:timeout': [v: number]
   load: []
   play: []
   pause: []

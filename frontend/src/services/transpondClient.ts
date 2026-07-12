@@ -15,9 +15,9 @@ export interface TranspondQueryParams {
 
 export type StreamMode = 'all' | 'location' | 'sensor'
 
-const DEFAULT_TIMEOUT = 5000
+const DEFAULT_TIMEOUT = 30000
 
-export function createTranspondClient(baseUrl: string) {
+export function createTranspondClient(baseUrl: string, timeout = DEFAULT_TIMEOUT) {
   const url = (path: string, params?: Record<string, string | number>) => {
     const u = baseUrl.replace(/\/+$/, '') + path
     if (!params) return u
@@ -30,7 +30,7 @@ export function createTranspondClient(baseUrl: string) {
 
   const request = async (method: string, path: string, body?: unknown, params?: Record<string, string | number>) => {
     const controller = new AbortController()
-    const timer = setTimeout(() => controller.abort(), DEFAULT_TIMEOUT)
+    const timer = setTimeout(() => controller.abort(), timeout)
     try {
       const resp = await fetch(url(path, params), {
         method,

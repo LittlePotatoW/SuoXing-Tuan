@@ -67,6 +67,7 @@
               :relayUrl="relayUrl" @update:relayUrl="relayUrl = $event"
               :rangeType="replayRangeType" :startN="replayStartN" :endN="replayEndN"
               :startMin="replayStartMin" :endMin="replayEndMin"
+              :timeout="replayTimeout" @update:timeout="replayTimeout = $event"
               :loaded="replayLoaded" :locCount="replayLocCount" :detCount="replayDetCount"
               :playing="replayPlaying"
               :current="replayCurrent" :total="replayTotal"
@@ -184,6 +185,7 @@ const replayCurrent = ref(0)
 const replayTotal = ref(0)
 const replayLocFrames = ref<any[]>([])
 const replayDetFrames = ref<any[]>([])
+const replayTimeout = ref(30)
 let replayTimer: any = null
 
 // ── 手动模式 ──
@@ -349,7 +351,7 @@ async function forwardSensor(data: any) {
 
 function startRelay() {
   if (!running.value || mode.value !== 'active' || subMode.value !== 'relay') return
-  transpond = createTranspondClient(relayUrl.value.trim())
+  transpond = createTranspondClient(relayUrl.value.trim(), replayTimeout.value * 1000)
   relayPoll()
   relayTimer = setInterval(relayPoll, relayInterval.value)
 }
@@ -390,7 +392,7 @@ async function relayPoll() {
 // ════════════════════════════════════════════════════════════
 
 async function replayLoad() {
-  const tc = createTranspondClient(relayUrl.value.trim())
+  const tc = createTranspondClient(relayUrl.value.trim(), replayTimeout.value * 1000)
   let locResult: any = null
   let detResult: any = null
 
