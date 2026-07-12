@@ -52,12 +52,6 @@
 
       <div style="width:1px;height:18px;background:#444;margin:0 2px" />
 
-      <!-- 连接测试 -->
-      <button @click="testConnect" style="background:#555;color:#fff;border:none;padding:3px 10px;font-size:11px;cursor:pointer;border-radius:3px">连接测试</button>
-      <span v-if="connResult !== null" style="font-size:10px" :style="{color: connResult ? '#4CAF50' : '#f44336'}">{{ connResult ? '✓' : '✗' }}</span>
-
-      <div style="width:1px;height:18px;background:#444;margin:0 2px" />
-
       <!-- 帧统计 -->
       <span style="font-size:10px;color:#888">帧: {{ frameCount }}</span>
       <span style="font-size:10px;color:#888">FPS: {{ fps.toFixed(1) }}</span>

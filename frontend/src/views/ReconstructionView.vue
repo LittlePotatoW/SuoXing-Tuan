@@ -45,6 +45,7 @@ const currentFrame = ref(0)
 const totalFrames = ref(0)
 const stats = reactive({ total_frames: 0, total_points: 0, vertex_count: 0, face_count: 0 })
 const error = ref('')
+const _meshLayers: any[] = []
 
 let ws: WebSocket | null = null
 
@@ -80,7 +81,7 @@ async function loadScene() {
           stats.total_points = msg.rebuild.total_points ?? 0
           stats.vertex_count = msg.rebuild.mesh?.vertex_count || 0
           stats.face_count = msg.rebuild.mesh?.face_count || 0
-          if (msg.rebuild.mesh) viewerRef.value?.addMesh(msg.rebuild.mesh)
+          _handleRebuild(msg.rebuild.mesh, msg.layered)
           if (msg.rebuild.camera_trail) viewerRef.value?.updateTrail(msg.rebuild.camera_trail)
         }
         break
@@ -91,7 +92,7 @@ async function loadScene() {
           stats.total_points = d.total_points ?? 0
           stats.vertex_count = d.mesh?.vertex_count || 0
           stats.face_count = d.mesh?.face_count || 0
-          if (d.mesh) viewerRef.value?.addMesh(d.mesh)
+          _handleRebuild(d.mesh, msg.layered)
           if (d.camera_trail) viewerRef.value?.updateTrail(d.camera_trail)
         }
         break
@@ -124,6 +125,19 @@ async function sendControl(action: string) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ action }),
   })
+}
+
+function _handleRebuild(mesh: any, layered: boolean) {
+  if (!mesh) return
+  console.log(`[3D重建] rebuild: layered=${layered} verts=${mesh.vertex_count} layers=${_meshLayers.length}`)
+  if (layered) {
+    _meshLayers.push(mesh)
+  } else {
+    _meshLayers.length = 0; _meshLayers.push(mesh)
+  }
+  const merged = viewerRef.value?._mergeLayers(_meshLayers)
+  if (merged) viewerRef.value?.addMesh(merged)
+  if (!layered) _meshLayers.length = 0
 }
 
 onUnmounted(() => {

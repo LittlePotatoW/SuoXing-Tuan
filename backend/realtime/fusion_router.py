@@ -88,14 +88,14 @@ async def feed_detection(payload: dict):
         sf = _build_sensor_frame(final, ts)
 
         import asyncio
+        import reconstruction.routes as _routes
         loop = asyncio.get_running_loop()
-        from reconstruction.routes import fusion as df, engine as eng
 
         def _proc():
-            fused = df.process(sf)
+            fused = _routes.fusion.process(sf)
             if fused is None: return None
-            eng.add_frame(fused)
-            return eng.get_result()
+            _routes.engine.add_frame(fused)
+            return _routes.engine.get_result()
 
         result = await loop.run_in_executor(None, _proc)
         fusion_count += 1
@@ -103,7 +103,7 @@ async def feed_detection(payload: dict):
         # YOLO
         yolo_hits = 0
         if yolo_enabled and _inference_engine and _inference_engine.loaded:
-            yolo_hits = _run_yolo(final, eng)
+            yolo_hits = _run_yolo(final, _routes.engine)
 
         if result and result.status == "completed":
             from reconstruction.routes import _broadcast

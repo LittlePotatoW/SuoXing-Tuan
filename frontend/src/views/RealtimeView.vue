@@ -205,6 +205,7 @@ const stats = reactive({ location: 0, detection: 0 })
 const meshStats = reactive({ frames: 0 })
 const crackList = ref<any[]>([])
 const backendConnected = ref(false)
+let _meshLayers: any[] = []  // 累计的 mesh 层
 
 // ── 日志 ──
 const actionLog = ref<LogEntry[]>([])
@@ -237,6 +238,7 @@ function onSwitchMode(m: 'passive' | 'active') {
     running.value = false
   }
   clearData()
+  fetch(`${backend}/api/reconstruction/reset`, { method: 'POST' })
   mode.value = m
   seenLoc.clear()
   seenDet.clear()
@@ -248,6 +250,7 @@ function onChangeSubMode(sm: string) {
     running.value = false
   }
   clearData()
+  fetch(`${backend}/api/reconstruction/reset`, { method: 'POST' })
   // 清除回放加载数据
   replayLocFrames.value = []; replayDetFrames.value = []
   replayLoaded.value = false; replayLocCount.value = 0; replayDetCount.value = 0
@@ -398,6 +401,7 @@ async function replayLoad() {
       const detN = replayStartN.value
       const locR = await tc.getLocations({ limit: locN > 0 ? locN : 50 })
       const detR = await tc.getSensors({ limit: detN > 0 ? detN : 50 })
+      console.log('replayLoad raw:', { locStatus: locR.status, locCount: locR.data?.count, locFrames: locR.data?.frames?.length, detCount: detR.data?.count, detFrames: detR.data?.frames?.length })
       locResult = locR.data
       detResult = detR.data
     } else {
@@ -656,6 +660,7 @@ function clearData() {
   stats.location = 0; stats.detection = 0; meshStats.frames = 0
   crackList.value = []
   relayCache.value = null
+  _meshLayers.length = 0
   viewerRef.value?.resetScene()
 }
 
@@ -679,12 +684,24 @@ async function clearAll() {
 function connectBackendWs() {
   const wsUrl = backend.replace('http', 'ws') + '/api/reconstruction/ws'
   backendWs = new WebSocket(wsUrl)
-  backendWs.onopen = () => { backendConnected.value = true }
+  backendWs.onopen = () => { backendConnected.value = true; console.log('[Realtime] WS connected') }
   backendWs.onmessage = (e) => {
     try {
       const msg = JSON.parse(e.data)
+      console.log('[Realtime] WS msg:', msg.type, msg.data?.mesh?.vertex_count)
       if (msg.type === 'rebuild_complete' && msg.data?.mesh) {
-        viewerRef.value?.addMesh(msg.data.mesh)
+        const isLayered = !!msg.layered
+        console.log(`[Realtime] rebuild: layered=${isLayered} verts=${msg.data.mesh.vertex_count} faces=${msg.data.mesh.face_count} layers=${_meshLayers.length}`)
+        if (isLayered) {
+          _meshLayers.push(msg.data.mesh)
+        } else {
+          _meshLayers = [msg.data.mesh]
+        }
+        const merged = viewerRef.value?._mergeLayers(_meshLayers)
+        if (merged) {
+          console.log(`[Realtime] merged: verts=${merged.vertex_count} faces=${merged.face_count} from ${_meshLayers.length} layers`)
+          viewerRef.value?.addMesh(merged)
+        }
         viewerRef.value?.updateTrail(msg.data.camera_trail)
         meshStats.frames = msg.data.total_frames || 0
         crackList.value = msg.data.cracks || []

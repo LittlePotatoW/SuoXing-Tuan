@@ -58,10 +58,12 @@ class ReconstructionEngine:
         voxel_size: float = VOXEL_SIZE,
         rebuild_interval_frames: int = REBUILD_INTERVAL_FRAMES,
         max_points: int = MAX_POINTS,
+        mode: str = "cumulative",
     ):
         self.voxel_size = voxel_size
         self.rebuild_interval_frames = rebuild_interval_frames
         self.max_points = max_points
+        self.mode = mode              # "cumulative" | "layered"
 
         # 内部状态
         self._lock = threading.RLock()
@@ -165,7 +167,7 @@ class ReconstructionEngine:
         try:
             merged = np.vstack(blocks)
             merged_colors = np.vstack(color_blocks).astype(np.uint8) if color_blocks else None
-            logger.info("Rebuild #%d: %d points", frame_count, merged.shape[0])
+            logger.info("Rebuild #%d: %d points, mode=%s", frame_count, merged.shape[0], self.mode)
             mesh = self._reconstruct_surface(merged, merged_colors)
 
             with self._lock:
@@ -176,22 +178,24 @@ class ReconstructionEngine:
                     if mesh.has_vertex_colors():
                         vc_float = np.asarray(mesh.vertex_colors)
                         vc = (np.clip(vc_float, 0.0, 1.0) * 255).astype(np.uint8).ravel().tolist()
-                    self._latest_mesh = MeshData(
+                    md = MeshData(
                         vertices=verts.ravel().tolist(),
                         faces=faces.ravel().tolist(),
                         vertex_count=verts.shape[0],
                         face_count=faces.shape[0],
                         vertex_colors=vc,
                     )
+                    self._latest_mesh = md
+
+                    # 逐层模式：清空累积，下次只用新帧
+                    if self.mode == "layered":
+                        self._point_blocks = []
+                        self._color_blocks = []
+                        self._total_points = 0
+                    # 全量模式：不清空，下次重建用全量数据
+
                 self._status = "completed"
                 self._last_rebuild_at_frame = frame_count
-
-                # 重建后清空累积块：增量模式，每段独立
-                self._point_blocks = []
-                self._color_blocks = []
-                self._total_points = 0
-                v = self._latest_mesh.vertex_count if self._latest_mesh else 0
-                f = self._latest_mesh.face_count if self._latest_mesh else 0
 
         except Exception as e:
             logger.error("Rebuild failed: %s", e, exc_info=True)

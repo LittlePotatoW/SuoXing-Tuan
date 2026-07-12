@@ -53,22 +53,16 @@ onMounted(() => {
   crackGroup = new THREE.Group()
   scene.add(crackGroup)
 
-  // 参考网格 + 坐标轴
   scene.add(new THREE.GridHelper(5, 20, 0x444444, 0x333333))
   scene.add(new THREE.AxesHelper(1))
 
-  // 光照（一次性添加到 scene，不随 mesh 更新销毁）
   scene.add(new THREE.AmbientLight(0xffffff, 0.7))
   const d1 = new THREE.DirectionalLight(0xffffff, 0.9)
-  d1.position.set(2, 4, 3)
-  scene.add(d1)
+  d1.position.set(2, 4, 3); scene.add(d1)
   const d2 = new THREE.DirectionalLight(0xffffff, 0.5)
-  d2.position.set(-2, -1, -2)
-  scene.add(d2)
+  d2.position.set(-2, -1, -2); scene.add(d2)
 
-  // 响应窗口大小变化
   window.addEventListener('resize', onResize)
-
   animId = requestAnimationFrame(loop)
 })
 
@@ -99,41 +93,27 @@ function loop() {
 // ── 外部方法 ──
 
 function resetScene() {
-  // 清理 meshGroup（geometry + material）
   meshGroup.traverse((child) => {
     if (child instanceof THREE.Mesh) {
       child.geometry?.dispose()
-      if (Array.isArray(child.material)) {
-        child.material.forEach(m => m.dispose())
-      } else {
-        child.material?.dispose()
-      }
+      if (Array.isArray(child.material)) { child.material.forEach(m => m.dispose()) }
+      else { child.material?.dispose() }
     }
   })
   meshGroup.clear()
-
-  // 清理 crackGroup
   crackGroup.traverse((child) => {
     if (child instanceof THREE.Mesh) {
       child.geometry?.dispose()
-      if (Array.isArray(child.material)) {
-        child.material.forEach(m => m.dispose())
-      } else {
-        child.material?.dispose()
-      }
+      if (Array.isArray(child.material)) { child.material.forEach(m => m.dispose()) }
+      else { child.material?.dispose() }
     }
   })
   crackGroup.clear()
-
-  // 清理 trailGroup
   trailGroup.traverse((child) => {
     if (child instanceof THREE.Line) {
       child.geometry?.dispose()
-      if (Array.isArray(child.material)) {
-        child.material.forEach(m => m.dispose())
-      } else {
-        child.material?.dispose()
-      }
+      if (Array.isArray(child.material)) { child.material.forEach(m => m.dispose()) }
+      else { child.material?.dispose() }
     }
   })
   trailGroup.clear()
@@ -142,12 +122,17 @@ function resetScene() {
 function addMesh(data: { vertices: number[]; faces: number[]; vertex_count: number; face_count: number; vertex_colors?: number[] } | null) {
   if (!data || !data.vertices.length) return
 
-  // 先清理旧 mesh，防止 GPU 内存泄漏
-  resetScene()
+  meshGroup.traverse((child) => {
+    if (child instanceof THREE.Mesh) {
+      child.geometry?.dispose()
+      if (Array.isArray(child.material)) { child.material.forEach(m => m.dispose()) }
+      else { child.material?.dispose() }
+    }
+  })
+  meshGroup.clear()
 
   const geo = new THREE.BufferGeometry()
-  const verts = new Float32Array(data.vertices)
-  geo.setAttribute('position', new THREE.BufferAttribute(verts, 3))
+  geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(data.vertices), 3))
 
   if (data.faces.length > 0) {
     geo.setIndex(data.faces)
@@ -155,30 +140,20 @@ function addMesh(data: { vertices: number[]; faces: number[]; vertex_count: numb
   }
 
   if (data.vertex_colors && data.vertex_colors.length === data.vertex_count * 3) {
-    const colors = new Uint8Array(data.vertex_colors)
-    geo.setAttribute('color', new THREE.BufferAttribute(colors, 3, true))
+    geo.setAttribute('color', new THREE.BufferAttribute(new Uint8Array(data.vertex_colors), 3, true))
   }
 
-  const mat = new THREE.MeshStandardMaterial({
-    vertexColors: true,
-    side: THREE.DoubleSide,
-    roughness: 0.6,
-    metalness: 0.0,
-  })
-  const mesh = new THREE.Mesh(geo, mat)
-  meshGroup.add(mesh)
+  const mat = new THREE.MeshStandardMaterial({ vertexColors: true, side: THREE.DoubleSide, roughness: 0.6, metalness: 0.0 })
+  meshGroup.add(new THREE.Mesh(geo, mat))
 
-  // 线框用独立 geometry 拷贝，避免与实体 mesh 共享导致 dispose 冲突
   const wireGeo = geo.clone()
   const wireMat = new THREE.MeshBasicMaterial({ color: 0x666666, wireframe: true })
-  const wire = new THREE.Mesh(wireGeo, wireMat)
-  meshGroup.add(wire)
+  meshGroup.add(new THREE.Mesh(wireGeo, wireMat))
 }
 
 function updateTrail(trail: number[][] | null) {
   trailGroup.clear()
   if (!trail || trail.length < 2) return
-
   const points = trail.map(p => new THREE.Vector3(p[0], p[1], p[2]))
   const geo = new THREE.BufferGeometry().setFromPoints(points)
   const mat = new THREE.LineBasicMaterial({ color: 0x4fc3f7 })
@@ -188,13 +163,11 @@ function updateTrail(trail: number[][] | null) {
 function addCracks(cracks: { position: { x: number; y: number; z: number }; confidence: number; crack_type: string }[]) {
   crackGroup.clear()
   if (!cracks || !cracks.length) return
-
   for (const c of cracks) {
     const size = 0.03 + c.confidence * 0.04
     const geo = new THREE.SphereGeometry(size, 8, 8)
     const color = c.crack_type === '裂缝' || c.crack_type === 'crack' ? 0xef5350
-      : c.crack_type === '渗漏' || c.crack_type === 'leakage' ? 0x42a5f5
-      : 0xffa726
+      : c.crack_type === '渗漏' || c.crack_type === 'leakage' ? 0x42a5f5 : 0xffa726
     const mat = new THREE.MeshBasicMaterial({ color })
     const sphere = new THREE.Mesh(geo, mat)
     sphere.position.set(c.position.x, c.position.y, c.position.z)
@@ -202,5 +175,23 @@ function addCracks(cracks: { position: { x: number; y: number; z: number }; conf
   }
 }
 
-defineExpose({ addMesh, updateTrail, resetScene, addCracks })
+// 合并多个 mesh 层为一个大 mesh
+function _mergeLayers(layers: { vertices: number[]; faces: number[]; vertex_count: number; face_count: number; vertex_colors?: number[] }[]): { vertices: number[]; faces: number[]; vertex_count: number; face_count: number; vertex_colors?: number[] } | null {
+  if (!layers.length) return null
+  const verts: number[] = []; const faces: number[] = []; const colors: number[] = []
+  let vTotal = 0; let fTotal = 0
+  for (const layer of layers) {
+    const oldV = vTotal
+    verts.push(...layer.vertices); vTotal += layer.vertex_count
+    for (const fi of layer.faces) faces.push(fi + oldV); fTotal += layer.face_count
+    if (layer.vertex_colors && layer.vertex_colors.length === layer.vertex_count * 3) {
+      colors.push(...layer.vertex_colors)
+    } else {
+      for (let i = 0; i < layer.vertex_count; i++) colors.push(128, 128, 128)
+    }
+  }
+  return { vertices: verts, faces, vertex_count: vTotal, face_count: fTotal, vertex_colors: colors }
+}
+
+defineExpose({ addMesh, updateTrail, resetScene, addCracks, _mergeLayers })
 </script>

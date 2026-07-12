@@ -79,7 +79,7 @@ async def upload_frame(frame: SensorFrame):
         return {"status": "skipped", "reason": "invalid frame"}
 
     if result.status == "completed":
-        asyncio.create_task(_broadcast({"type": "rebuild_complete", "data": result.model_dump()}))
+        asyncio.create_task(_broadcast({"type": "rebuild_complete", "data": result.model_dump(), "layered": engine.mode == "layered"}))
 
     return {
         "status": "ok",
@@ -101,11 +101,39 @@ async def get_status():
 
 
 @router.post("/reset")
-async def reset_engine():
-    """清空重建数据，重新开始。"""
+async def reset_engine(payload: dict = {}):
+    """清空重建数据 + 应用新配置。"""
     global engine
-    engine = ReconstructionEngine()
+    engine = ReconstructionEngine(
+        mode=payload.get("mode", engine.mode),
+        rebuild_interval_frames=int(payload.get("interval", engine.rebuild_interval_frames)),
+    )
     return {"status": "ok"}
+
+
+@router.post("/config")
+async def set_config(payload: dict):
+    """修改重建参数。"""
+    global engine
+    if "mode" in payload:
+        engine.mode = payload["mode"]
+    if "interval" in payload:
+        engine.rebuild_interval_frames = int(payload["interval"])
+    return {
+        "mode": engine.mode,
+        "interval": engine.rebuild_interval_frames,
+    }
+
+
+@router.get("/config")
+async def get_config():
+    """查询重建参数。"""
+    return {
+        "mode": engine.mode,
+        "interval": engine.rebuild_interval_frames,
+        "total_frames": engine.frame_count,
+        "total_points": engine._total_points,
+    }
 
 
 # ============================================================
@@ -122,10 +150,13 @@ async def load_scene(payload: dict):
     if not scene_path:
         return {"status": "error", "message": "scene_path required"}
 
-    # 停止当前回放 + 重建引擎
+    # 停止当前回放 + 重建引擎（继承当前配置）
     if _loader and _loader.is_running:
         _loader.stop()
-    engine = ReconstructionEngine()
+    _cfg = {"mode": engine.mode, "interval": engine.rebuild_interval_frames}
+    engine = ReconstructionEngine(
+        mode=_cfg["mode"], rebuild_interval_frames=_cfg["interval"],
+    )
 
     try:
         _loader = SceneLoader(scene_path)
@@ -147,7 +178,7 @@ async def load_scene(payload: dict):
         result = await loop.run_in_executor(None, _process)
         if result is None:
             return
-        msg = {"type": "load_progress", "current_frame": idx + 1, "total_frames": _loader.total_frames}
+        msg = {"type": "load_progress", "current_frame": idx + 1, "total_frames": _loader.total_frames, "layered": engine.mode == "layered"}
         if result.status == "completed":
             msg["rebuild"] = result.model_dump()
         asyncio.create_task(_broadcast(msg))
@@ -186,7 +217,7 @@ async def control_playback(payload: dict):
             result = await loop.run_in_executor(None, _process)
             if result is None:
                 return
-            msg = {"type": "load_progress", "current_frame": idx + 1, "total_frames": _loader.total_frames}
+            msg = {"type": "load_progress", "current_frame": idx + 1, "total_frames": _loader.total_frames, "layered": engine.mode == "layered"}
             if result.status == "completed":
                 msg["rebuild"] = result.model_dump()
             asyncio.create_task(_broadcast(msg))

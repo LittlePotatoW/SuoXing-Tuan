@@ -33,6 +33,7 @@ const items = [
   { path: '/monitor', label: '实时监控', name: 'monitor' },
   { path: '/page3', label: 'Page 3', name: 'page3' },
   { path: '/page4', label: 'Page 4', name: 'page4' },
+  { path: '/config', label: '配置', name: 'config' },
 ]
 
 function linkStyle(item: typeof items[0]) {

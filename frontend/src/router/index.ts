@@ -5,6 +5,7 @@ import MonitorView from '../views/MonitorView.vue'
 import Page3 from '../views/Page3.vue'
 import Page4 from '../views/Page4.vue'
 import RealtimeView from '../views/RealtimeView.vue'
+import SettingsView from '../views/SettingsView.vue'
 
 export default createRouter({
   history: createWebHistory(),
@@ -15,5 +16,6 @@ export default createRouter({
     { path: '/monitor', name: 'monitor', component: MonitorView },
     { path: '/page3', name: 'page3', component: Page3 },
     { path: '/page4', name: 'page4', component: Page4 },
+    { path: '/config', name: 'config', component: SettingsView },
   ],
 })
