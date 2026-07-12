@@ -24,7 +24,9 @@
         <option :value="5000">5s</option>
       </select>
     </div>
-    <div style="color:#888;font-size:10px">
+    <button @click="doTest" style="background:#555;color:#fff;border:none;padding:2px 8px;font-size:10px;cursor:pointer;border-radius:3px;margin-top:4px">连接测试</button>
+    <span v-if="testResult !== null" style="font-size:10px;margin-left:6px" :style="{color: testResult ? '#4CAF50' : '#f44336'}">{{ testResult ? '✓ 可达' : '✗ 不可达' }}</span>
+    <div style="color:#888;font-size:10px;margin-top:2px">
       状态: <span :style="{color: relayConnected ? '#4CAF50' : '#f44336'}">{{ relayConnected ? '●已连接' : '●未连接' }}</span>
     </div>
     <div v-if="relayConnected && relayCache" style="color:#888;font-size:10px;margin-top:2px">
@@ -34,7 +36,9 @@
 </template>
 
 <script setup lang="ts">
-defineProps<{
+import { ref } from 'vue'
+
+const props = defineProps<{
   relayUrl: string
   relayInterval: number
   relayConnected: boolean
@@ -45,4 +49,16 @@ defineEmits<{
   'update:relayUrl': [v: string]
   'update:relayInterval': [v: number]
 }>()
+
+const testResult = ref<boolean | null>(null)
+
+async function doTest() {
+  testResult.value = null
+  try {
+    const r = await fetch(props.relayUrl + '/status', { method: 'GET', signal: AbortSignal.timeout(3000) })
+    testResult.value = r.ok
+  } catch {
+    testResult.value = false
+  }
+}
 </script>

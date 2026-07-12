@@ -25,6 +25,21 @@
         {{ running ? '停止' : '启动' }}
       </button>
 
+      <div style="width:1px;height:18px;background:#444;margin:0 2px" />
+
+      <!-- 服务器地址 -->
+      <input v-model="relayHost" :disabled="running" placeholder="host"
+        style="width:120px;background:#2a2a2a;color:#ccc;border:1px solid #555;padding:2px 6px;font-size:10px" />
+      <span style="color:#888;font-size:10px">:</span>
+      <input v-model.number="relayPort" :disabled="running" type="number" placeholder="port"
+        style="width:55px;background:#2a2a2a;color:#ccc;border:1px solid #555;padding:2px 4px;font-size:10px" />
+
+      <!-- 连接测试 -->
+      <button @click="testConnect" style="background:#555;color:#fff;border:none;padding:3px 10px;font-size:11px;cursor:pointer;border-radius:3px">连接测试</button>
+      <span v-if="connResult !== null" style="font-size:10px" :style="{color: connResult ? '#4CAF50' : '#f44336'}">{{ connResult ? '✓' : '✗' }}</span>
+
+      <div style="width:1px;height:18px;background:#444;margin:0 2px" />
+
       <!-- 轮询间隔 -->
       <span style="font-size:10px;color:#888">间隔</span>
       <select v-model.number="pollInterval" :disabled="running"
@@ -34,6 +49,12 @@
         <option :value="1000">1s</option>
         <option :value="2000">2s</option>
       </select>
+
+      <div style="width:1px;height:18px;background:#444;margin:0 2px" />
+
+      <!-- 连接测试 -->
+      <button @click="testConnect" style="background:#555;color:#fff;border:none;padding:3px 10px;font-size:11px;cursor:pointer;border-radius:3px">连接测试</button>
+      <span v-if="connResult !== null" style="font-size:10px" :style="{color: connResult ? '#4CAF50' : '#f44336'}">{{ connResult ? '✓' : '✗' }}</span>
 
       <div style="width:1px;height:18px;background:#444;margin:0 2px" />
 
@@ -100,9 +121,17 @@
 <script setup lang="ts">
 import { ref, computed, onUnmounted } from 'vue'
 import PointCloudViewer from '../components/PointCloudViewer.vue'
+import { getConfig } from '../services/config'
+
+const cfg = getConfig()
+const relayHost = ref(cfg.transpond.host)
+const relayPort = ref(cfg.transpond.port)
 
 // ── 状态 ──
 const running = ref(false)
+const connResult = ref<boolean | null>(null)
+
+const relayBase = computed(() => `http://${relayHost.value}:${relayPort.value}`)
 const errorMsg = ref('')
 const failCount = ref(0)
 const pollInterval = ref(200)
@@ -124,6 +153,16 @@ const pcViewerRef = ref<InstanceType<typeof PointCloudViewer> | null>(null)
 const currentImage = computed(() => lastImage.value?.src || '')
 
 // ── 轮询 ──
+
+async function testConnect() {
+  connResult.value = null
+  try {
+    const r = await fetch(relayBase.value + '/status', { method: 'GET', signal: AbortSignal.timeout(3000) })
+    connResult.value = r.ok
+  } catch {
+    connResult.value = false
+  }
+}
 
 function toggleRunning() {
   if (running.value) {
@@ -150,7 +189,7 @@ function stopPolling() {
 
 async function pollOnce() {
   try {
-    const resp = await fetch('/relay/sensor?limit=1')
+    const resp = await fetch(relayBase.value + '/sensor?limit=1')
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
     const data = await resp.json()
     if (data.frames?.length) {

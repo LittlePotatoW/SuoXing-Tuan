@@ -71,7 +71,6 @@ async function loadScene() {
     switch (msg.type) {
       case 'load_started':
         totalFrames.value = msg.total_frames ?? 0
-        viewerRef.value?.resetScene()
         break
       case 'load_progress':
         currentFrame.value = msg.current_frame ?? 0

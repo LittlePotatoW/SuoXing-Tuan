@@ -6,5 +6,11 @@
 import { createApp } from 'vue'
 import App from './App.vue'
 import router from './router'
+import { loadConfig } from './services/config'
 
-createApp(App).use(router).mount('#app')
+async function bootstrap() {
+  await loadConfig()
+  createApp(App).use(router).mount('#app')
+}
+
+bootstrap()

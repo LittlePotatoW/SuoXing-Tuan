@@ -15,6 +15,11 @@
       style="width:100%;background:#1a1a1a;color:#ccc;border:1px solid #555;padding:3px 6px;font-size:10px;margin-bottom:6px"
     />
 
+    <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">
+      <button @click="doTest" style="background:#555;color:#fff;border:none;padding:2px 8px;font-size:10px;cursor:pointer;border-radius:3px">连接测试</button>
+      <span v-if="testResult !== null" style="font-size:10px" :style="{color: testResult ? '#4CAF50' : '#f44336'}">{{ testResult ? '✓ 可达' : '✗ 不可达' }}</span>
+    </div>
+
     <!-- 范围类型选择 -->
     <div style="display:flex;gap:12px;margin-bottom:6px">
       <label style="cursor:pointer;font-size:10px">
@@ -68,16 +73,7 @@
         <button v-if="!playing" @click="$emit('play')" style="background:#388E3C;color:#fff;border:none;padding:2px 10px;font-size:10px;cursor:pointer;border-radius:3px">▶ 播放</button>
         <button v-else @click="$emit('pause')" style="background:#E65100;color:#fff;border:none;padding:2px 10px;font-size:10px;cursor:pointer;border-radius:3px">⏸ 暂停</button>
         <button @click="$emit('stop')" style="background:#555;color:#fff;border:none;padding:2px 10px;font-size:10px;cursor:pointer;border-radius:3px">⏹ 停止</button>
-      </div>
-      <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">
-        <span style="color:#888;font-size:10px">速度:</span>
-        <select :value="playSpeed" @change="$emit('update:playSpeed', +($event.target as HTMLSelectElement).value)"
-          style="background:#1a1a1a;color:#ccc;border:1px solid #555;font-size:10px;padding:1px">
-          <option :value="0.5">0.5x</option>
-          <option :value="1">1x</option>
-          <option :value="2">2x</option>
-          <option :value="5">5x</option>
-        </select>
+        <button @click="$emit('renderAll')" style="background:#FF6F00;color:#fff;border:none;padding:2px 10px;font-size:10px;cursor:pointer;border-radius:3px">⚡ 一键渲染</button>
       </div>
       <div style="font-size:10px;color:#888">
         进度: {{ current }} / {{ total }}
@@ -90,7 +86,9 @@
 </template>
 
 <script setup lang="ts">
-defineProps<{
+import { ref } from 'vue'
+
+const props = defineProps<{
   relayUrl: string
   rangeType: 'frames' | 'time'
   startN: number
@@ -101,7 +99,6 @@ defineProps<{
   locCount: number
   detCount: number
   playing: boolean
-  playSpeed: number
   current: number
   total: number
 }>()
@@ -113,10 +110,22 @@ defineEmits<{
   'update:endN': [v: number]
   'update:startMin': [v: number]
   'update:endMin': [v: number]
-  'update:playSpeed': [v: number]
   load: []
   play: []
   pause: []
   stop: []
+  renderAll: []
 }>()
+
+const testResult = ref<boolean | null>(null)
+
+async function doTest() {
+  testResult.value = null
+  try {
+    const r = await fetch(props.relayUrl + '/status', { method: 'GET', signal: AbortSignal.timeout(3000) })
+    testResult.value = r.ok
+  } catch {
+    testResult.value = false
+  }
+}
 </script>

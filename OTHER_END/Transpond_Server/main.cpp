@@ -22,6 +22,18 @@ int main(int argc, char* argv[]) {
     auto state = std::make_shared<AppState>(max_loc, max_sensor);
     httplib::Server svr;
 
+    // ── CORS — 预检 + 所有响应统一加头 ──
+    svr.set_pre_routing_handler([](const httplib::Request& req, httplib::Response& res) {
+        res.set_header("Access-Control-Allow-Origin", "*");
+        if (req.method == "OPTIONS") {
+            res.set_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+            res.set_header("Access-Control-Allow-Headers", "Content-Type");
+            res.status = 204;
+            return httplib::Server::HandlerResponse::Handled;
+        }
+        return httplib::Server::HandlerResponse::Unhandled;
+    });
+
     // ── POST ──
     svr.Post("/location", [state](const httplib::Request& req, httplib::Response& res) {
         handle_post_location(req, res, *state);

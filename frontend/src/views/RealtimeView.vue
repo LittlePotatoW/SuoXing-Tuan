@@ -68,18 +68,18 @@
               :rangeType="replayRangeType" :startN="replayStartN" :endN="replayEndN"
               :startMin="replayStartMin" :endMin="replayEndMin"
               :loaded="replayLoaded" :locCount="replayLocCount" :detCount="replayDetCount"
-              :playing="replayPlaying" :playSpeed="replaySpeed"
+              :playing="replayPlaying"
               :current="replayCurrent" :total="replayTotal"
               @update:rangeType="replayRangeType = $event"
               @update:startN="replayStartN = $event"
               @update:endN="replayEndN = $event"
               @update:startMin="replayStartMin = $event"
               @update:endMin="replayEndMin = $event"
-              @update:playSpeed="replaySpeed = $event"
               @load="replayLoad"
               @play="replayPlay"
               @pause="replayPause"
               @stop="replayStop"
+              @renderAll="replayRenderAll"
             />
             <ManualPanel v-else-if="subMode === 'manual'"
               :folderName="manualFolder" :dataStatus="manualDataStatus"
@@ -119,7 +119,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted, onUnmounted, watch, nextTick } from 'vue'
+import { ref, reactive, onMounted, onUnmounted, watch } from 'vue'
 import ReconstructionViewer from '../components/ReconstructionViewer.vue'
 import TopToolbar from '../components/TopToolbar.vue'
 import DebugSidebar from '../components/DebugSidebar.vue'
@@ -132,7 +132,7 @@ import ReplayPanel from '../components/ReplayPanel.vue'
 import ManualPanel from '../components/ManualPanel.vue'
 import ActionLogBar, { type LogEntry } from '../components/ActionLogBar.vue'
 import { getBaseUrl } from '../services/apiClient'
-import { RELAY_URL } from '../services/relayConfig'
+import { getTranspondUrl } from '../services/config'
 import { createTranspondClient, type TranspondClient } from '../services/transpondClient'
 import { makeSyntheticJpegBase64, makeLocationData, makeSensorFrame, makeSensorFrameStraight, Car } from '../services/dataGenerator'
 
@@ -161,7 +161,7 @@ const saveDet = ref(true)
 const saveFusion = ref(true)
 
 // ── 中继模式 ──
-const relayUrl = ref(RELAY_URL)
+const relayUrl = ref(getTranspondUrl())
 const relayInterval = ref(5000)
 const relayConnected = ref(false)
 const relayCache = ref<{ location: number; sensor: number } | null>(null)
@@ -180,7 +180,6 @@ const replayLoaded = ref(false)
 const replayLocCount = ref(0)
 const replayDetCount = ref(0)
 const replayPlaying = ref(false)
-const replaySpeed = ref(1)
 const replayCurrent = ref(0)
 const replayTotal = ref(0)
 const replayLocFrames = ref<any[]>([])
@@ -231,25 +230,35 @@ function pageLabel() {
   return sub[subMode.value] || '主动'
 }
 
-// ── 模式切换 ──
+// ── 模式切换 (停止当前运行 + 清空场景 + 恢复启动按钮) ──
 function onSwitchMode(m: 'passive' | 'active') {
-  stopAllTimers()
+  if (running.value) {
+    stopAllTimers()
+    running.value = false
+  }
+  clearData()
   mode.value = m
   seenLoc.clear()
   seenDet.clear()
-  if (m === 'active' && running.value) {
-    startActive()
-  }
 }
 
 function onChangeSubMode(sm: string) {
-  stopAllTimers()
+  if (running.value) {
+    stopAllTimers()
+    running.value = false
+  }
+  clearData()
+  // 清除回放加载数据
+  replayLocFrames.value = []; replayDetFrames.value = []
+  replayLoaded.value = false; replayLocCount.value = 0; replayDetCount.value = 0
+  replayCurrent.value = 0; replayTotal.value = 0
+  // 清除手动加载数据
+  manualLocFrames.value = []; manualDetFrames.value = []
+  manualDataStatus.value = 'none'; manualLocCount.value = 0; manualDetCount.value = 0
+  manualFusionCount.value = 0; manualCurrent.value = 0; manualTotal.value = 0
   subMode.value = sm as 'relay' | 'replay' | 'manual'
   seenLoc.clear()
   seenDet.clear()
-  if (running.value && mode.value === 'active') {
-    startActive()
-  }
 }
 
 function stopAllTimers() {
@@ -263,6 +272,7 @@ function toggleRunning() {
   running.value = !running.value
   if (!running.value) {
     stopAllTimers()
+    relayConnected.value = false
   } else if (mode.value === 'active') {
     startActive()
   }
@@ -337,7 +347,6 @@ async function forwardSensor(data: any) {
 function startRelay() {
   if (!running.value || mode.value !== 'active' || subMode.value !== 'relay') return
   transpond = createTranspondClient(relayUrl.value.trim())
-  relayConnected.value = true
   relayPoll()
   relayTimer = setInterval(relayPoll, relayInterval.value)
 }
@@ -439,6 +448,25 @@ function replayStop() {
   replayCurrent.value = 0
 }
 
+async function replayRenderAll() {
+  if (!replayLoaded.value) return
+  const locs = replayLocFrames.value
+  const dets = replayDetFrames.value
+  const allFrames: { type: 'loc' | 'det'; data: any; ts: number }[] = [
+    ...locs.map((f: any) => ({ type: 'loc' as const, data: f, ts: f.timestamp_ns })),
+    ...dets.map((f: any) => ({ type: 'det' as const, data: f, ts: f.timestamp_ns })),
+  ].sort((a, b) => a.ts - b.ts)
+
+  const BATCH = 10
+  for (let i = 0; i < allFrames.length; i += BATCH) {
+    const batch = allFrames.slice(i, i + BATCH)
+    await Promise.all(batch.map(f => f.type === 'loc' && !straightLineOn.value ? forwardLocation(f.data) : f.type === 'det' ? forwardSensor(f.data) : Promise.resolve()))
+    replayCurrent.value = Math.min(i + BATCH, allFrames.length)
+  }
+  replayCurrent.value = allFrames.length
+  log(`一键渲染完成: ${allFrames.length} 帧`, 'success')
+}
+
 function doReplayStep() {
   if (!replayPlaying.value) return
 
@@ -467,7 +495,7 @@ function doReplayStep() {
   // 计算下一帧延迟
   if (replayCurrent.value < allFrames.length) {
     const nextTs = allFrames[replayCurrent.value].ts
-    const delay = Math.max(10, (nextTs - frame.ts) / 1e6 / replaySpeed.value)
+    const delay = Math.max(10, (nextTs - frame.ts) / 1e6)
     replayTimer = setTimeout(doReplayStep, delay)
   } else {
     replayTimer = setTimeout(doReplayStep, 100)
@@ -624,6 +652,13 @@ async function toggleRecon() {
   await postJson(`${backend}/api/realtime/toggle`, { reconstruction: reconOn.value })
 }
 
+function clearData() {
+  stats.location = 0; stats.detection = 0; meshStats.frames = 0
+  crackList.value = []
+  relayCache.value = null
+  viewerRef.value?.resetScene()
+}
+
 async function clearAll() {
   stopAllTimers()
   running.value = false
@@ -631,8 +666,7 @@ async function clearAll() {
     fetch(`${backend}/api/reconstruction/reset`, { method: 'POST' }),
     fetch(`${backend}/api/preprocessing/reset`, { method: 'POST' }),
   ])
-  stats.location = 0; stats.detection = 0; meshStats.frames = 0
-  crackList.value = []
+  clearData()
   seenLoc.clear(); seenDet.clear()
   straightLineT0 = 0
   replayLoaded.value = false; replayLocFrames.value = []; replayDetFrames.value = []

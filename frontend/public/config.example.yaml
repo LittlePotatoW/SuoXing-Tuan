@@ -1,0 +1,13 @@
+# ============================================================
+# Frontend 配置文件 — 复制为 config.yaml 并修改实际地址
+# ============================================================
+
+# 后端服务 (Python FastAPI)
+backend:
+  host: localhost
+  port: 8000
+
+# 数据中继站 (TranspondServer C++)
+transpond:
+  host: localhost
+  port: 8001
