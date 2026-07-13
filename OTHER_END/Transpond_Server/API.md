@@ -1,6 +1,7 @@
 # TranspondServer API 文档
 
 **默认端口**: 8001（可通过 `--port` 修改）
+**CORS**: 所有响应均包含 `Access-Control-Allow-Origin: *`
 
 ---
 
@@ -55,7 +56,7 @@
 
 ## POST /frames
 
-上传批量传感器数据（`new_detection_data` 格式，1~N 帧）。
+上传批量传感器数据，1~N 帧。
 
 **请求体**:
 
@@ -109,7 +110,7 @@
 
 ## POST /debug
 
-调试指令（预留）。
+调试指令。
 
 **请求体**:
 
@@ -202,6 +203,20 @@ GET /sensor?limit=10&after=1783586485000000000
 
 ---
 
+## CORS 支持
+
+所有响应均自动添加：
+
+```
+Access-Control-Allow-Origin: *
+Access-Control-Allow-Methods: GET, POST, OPTIONS
+Access-Control-Allow-Headers: Content-Type
+```
+
+OPTIONS 预检请求返回 204，无需额外配置。
+
+---
+
 ## 命令行参数
 
 ```
@@ -214,15 +229,20 @@ transpond-server --port 8001 --max-loc 2000 --max-sensor 200
 | `--max-loc` | 2000 | location 缓存上限 |
 | `--max-sensor` | 200 | sensor 缓存上限 |
 
-## 部署
+## 编译部署
 
 ```bash
-# 编译
-cargo build --release
-
-# 产物: target/release/transpond-server (单文件 ~8MB)
+# 编译 (需要 cmake + g++)
+mkdir build && cd build
+cmake .. && make -j$(nproc)
 
 # 部署
-scp target/release/transpond-server user@server:/opt/
+scp build/transpond-server user@server:/opt/
 ssh user@server "/opt/transpond-server --port 8001"
+```
+
+## 测试
+
+```bash
+python test_end/send_test_data.py --server 39.105.129.111:8001 --count 50
 ```

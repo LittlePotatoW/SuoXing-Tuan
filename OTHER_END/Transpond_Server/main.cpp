@@ -1,12 +1,20 @@
 #include <iostream>
+#include <sstream>
 #include <memory>
 #include <thread>
 #include <chrono>
 #include <cstring>
 #include <ctime>
 #include "handlers.h"
+#include "log.h"
 
 using namespace std::chrono_literals;
+
+RingLog g_log(100);
+
+class LogBuf : public std::stringbuf {
+    int sync() override { g_log.append(str()); str(""); return 0; }
+};
 
 int main(int argc, char* argv[]) {
     int port = 8001;
@@ -18,6 +26,10 @@ int main(int argc, char* argv[]) {
         else if (!strcmp(argv[i], "--max-loc") && i+1 < argc) max_loc = std::stoul(argv[++i]);
         else if (!strcmp(argv[i], "--max-sensor") && i+1 < argc) max_sensor = std::stoul(argv[++i]);
     }
+
+    LogBuf lbuf;
+    auto* old_buf = std::cout.rdbuf();
+    std::cout.rdbuf(&lbuf);
 
     auto state = std::make_shared<AppState>(max_loc, max_sensor);
     httplib::Server svr;
@@ -54,6 +66,9 @@ int main(int argc, char* argv[]) {
     });
     svr.Get("/sensor", [state](const httplib::Request& req, httplib::Response& res) {
         handle_get_sensor(req, res, *state);
+    });
+    svr.Get("/logs", [](const httplib::Request&, httplib::Response& res) {
+        res.set_content(g_log.to_json().dump(), "application/json");
     });
 
     // ── WebSocket /stream ──
@@ -127,5 +142,7 @@ int main(int argc, char* argv[]) {
     std::cout << "  max-loc=" << max_loc << " max-sensor=" << max_sensor << std::endl;
 
     svr.listen("0.0.0.0", port);
+
+    std::cout.rdbuf(old_buf);
     return 0;
 }

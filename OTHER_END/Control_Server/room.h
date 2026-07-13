@@ -6,6 +6,7 @@
 #include <atomic>
 #include <nlohmann/json.hpp>
 #include <httplib.h>
+#include "ring_store.h"
 
 using json = nlohmann::json;
 
@@ -15,6 +16,8 @@ struct Room {
     httplib::ws::WebSocket* robot_ws = nullptr;
     std::atomic<uint64_t> last_ctrl_ts{0};
     int max_phones = 10;
+    RingStore<json> tele_store{200};
+    RingStore<json> loc_store{200};
     std::mutex mtx;
 
     explicit Room(std::string room_id, int max_p = 10)
