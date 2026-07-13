@@ -210,7 +210,6 @@ class SceneLoader:
                 frame = self.load_frame(i)
                 if frame and on_frame:
                     await on_frame(frame, i)
-                await asyncio.sleep(interval)
         finally:
             self._running = False
             if on_complete and not self._paused:
