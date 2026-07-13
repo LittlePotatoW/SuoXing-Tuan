@@ -75,6 +75,16 @@ async def upload_frame(frame: SensorFrame):
         if fused is None:
             return None
         engine.add_frame(fused)
+
+        # YOLO 裂缝检测 + 2D→3D 投影
+        from realtime.fusion_router import _inference_engine
+        logger.info("YOLO check: engine=%s loaded=%s cam_views=%d",
+                    _inference_engine is not None,
+                    _inference_engine.loaded if _inference_engine else False,
+                    len(frame.camera_views))
+        if _inference_engine and _inference_engine.loaded:
+            _run_yolo_on_frame(frame, fused, engine)
+
         return engine.get_result()
 
     result = await loop.run_in_executor(None, _process)
@@ -259,6 +269,81 @@ async def ws_reconstruction(ws: WebSocket):
     except WebSocketDisconnect:
         _ws_clients.remove(ws)
         logger.info("Reconstruction WS: client disconnected (%d total)", len(_ws_clients))
+
+
+def _run_yolo_on_frame(frame, fused, eng) -> int:
+    """在 SensorFrame 上跑 YOLO，检测结果投影到 3D 并存为裂缝标注。"""
+    import numpy as np
+    from PIL import Image
+    from io import BytesIO
+    from reconstruction.projector import DefectProjector
+    from realtime.fusion_router import _inference_engine
+
+    def _decode_rgb(image_data):
+        try:
+            # 处理 base64 编码: Pydantic bytes 字段可能是 base64 字符串
+            if image_data[:2] != b'\xff\xd8':
+                import base64
+                try:
+                    image_data = base64.b64decode(image_data)
+                except Exception:
+                    pass
+            pil_img = Image.open(BytesIO(image_data)).convert("RGB")
+            return np.array(pil_img)
+        except Exception:
+            return None
+
+    # 把 CAMERA_INTRINSICS_CONFIG 转成 DefectProjector 格式
+    _cam_intrinsics = {}
+    for _i, _cfg in enumerate(CAMERA_INTRINSICS_CONFIG):
+        _cam_intrinsics[_i] = {
+            "fx": _cfg["K"][0][0], "fy": _cfg["K"][1][1],
+            "cx": _cfg["K"][0][2], "cy": _cfg["K"][1][2],
+            "width": _cfg["image_width"], "height": _cfg["image_height"],
+        }
+    proj = DefectProjector(camera_intrinsics=_cam_intrinsics if _cam_intrinsics else None)
+    hits = 0
+    car_pos = frame.car_position
+    if car_pos is None:
+        return hits
+    cp = car_pos.pose
+    car_world = {
+        "position": {"x": cp.position.x, "y": cp.position.y, "z": cp.position.z},
+        "rotation": {"qw": cp.rotation.qw, "qx": cp.rotation.qx, "qy": cp.rotation.qy, "qz": cp.rotation.qz},
+    }
+
+    for idx, cv in enumerate(frame.camera_views):
+        if not cv.image_data:
+            continue
+        img = _decode_rgb(cv.image_data)
+        if img is None:
+            continue
+        try:
+            res = _inference_engine.infer(img)
+        except Exception as exc:
+            logger.warning("YOLO infer failed cam %d: %s", idx, exc)
+            continue
+        if not res or not res.detections:
+            continue
+        cp2 = cv.camera_pose
+        for det in res.detections:
+            x1, y1, x2, y2 = det.bbox
+            u, v = (x1 + x2) / 2, (y1 + y2) / 2
+            w = proj.project_pixel_defect(
+                u=float(u), v=float(v), depth=3.0, camera_index=idx,
+                camera_pose_in_body={
+                    "position": {"x": cp2.position.x, "y": cp2.position.y, "z": cp2.position.z},
+                    "rotation": {"qw": cp2.rotation.qw, "qx": cp2.rotation.qx, "qy": cp2.rotation.qy, "qz": cp2.rotation.qz},
+                },
+                car_pose_in_world=car_world,
+            )
+            if w:
+                eng.add_crack(x=w["x"], y=w["y"], z=w["z"],
+                              confidence=det.confidence, crack_type=det.class_name)
+                hits += 1
+    if hits:
+        logger.info("YOLO: %d cracks found in frame %s", hits, frame.frame_id)
+    return hits
 
 
 async def _broadcast(payload: dict) -> None:
