@@ -25,12 +25,12 @@ LIDAR_POSE_IN_BODY = [0.0, 0.0, 0.5, 1.0, 0.0, 0.0, 0.0]
 # 实际部署时替换为标定值；设空列表则禁用颜色渲染
 CAMERA_INTRINSICS_CONFIG = [
     {
-        "K": [[600.0, 0.0, 272.0],
-              [0.0, 600.0, 192.0],
+        "K": [[640.0, 0.0, 320.0],
+              [0.0, 640.0, 240.0],
               [0.0, 0.0, 1.0]],
         "dist_coeff": [0.0, 0.0, 0.0, 0.0, 0.0],  # 无镜头畸变
-        "image_width": 544,
-        "image_height": 384,
+        "image_width": 640,
+        "image_height": 480,
     },
 ]
 
@@ -65,6 +65,9 @@ router = APIRouter(prefix="/api/reconstruction", tags=["reconstruction"])
 
 @router.post("/frame")
 async def upload_frame(frame: SensorFrame):
+    logger.info("Frame received: %s, %d cam_views, %d pts",
+                frame.frame_id, len(frame.camera_views),
+                frame.point_cloud.point_count if frame.point_cloud else 0)
     loop = asyncio.get_running_loop()
 
     def _process():

@@ -110,8 +110,21 @@ class DataFusion:
                 )
                 if colors_np is not None:
                     point_colors = colors_np.ravel().tolist()
+                    logger.debug("Color sampling OK: %d points, %d colors, %d images",
+                                 len(points_world), len(point_colors) // 3, len(images))
+                else:
+                    logger.warning("Color sampling returned None for frame %s (no points projected)", raw.frame_id)
             except Exception as exc:
                 logger.warning("Color sampling failed for frame %s: %s", raw.frame_id, exc)
+        else:
+            if not self.camera_intrinsics_list:
+                logger.debug("Color sampling skipped: no camera intrinsics configured")
+            elif len(cameras_world) != len(images):
+                logger.warning("Color sampling skipped: camera count mismatch (%d cameras, %d images)",
+                              len(cameras_world), len(images))
+            elif len(cameras_world) != len(self.camera_intrinsics_list):
+                logger.warning("Color sampling skipped: %d cameras but %d intrinsics configured",
+                              len(cameras_world), len(self.camera_intrinsics_list))
 
         # ── 打包 FusedFrame ──
         fused = FusedFrame(

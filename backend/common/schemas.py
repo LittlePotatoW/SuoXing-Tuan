@@ -95,6 +95,8 @@ class SensorFrame(BaseModel):
       - 小车当前世界位姿
       - 运动学参数
     """
+    model_config = {"extra": "ignore"}  # 允许 transpond-server 的额外字段
+
     frame_id: str = Field(default_factory=lambda: uuid.uuid4().hex[:12])
     timestamp_ns: int = Field(default_factory=lambda: time.time_ns())
 
