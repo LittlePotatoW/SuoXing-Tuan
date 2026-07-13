@@ -71,6 +71,10 @@
         <button @click="testCtrl" style="background:#555;color:#fff;border:none;padding:3px 10px;font-size:11px;cursor:pointer;border-radius:3px">测试连接</button>
         <span v-if="ctrlOk !== null" style="font-size:11px" :style="{color: ctrlOk ? '#4CAF50' : '#f44336'}">{{ ctrlOk ? '✓' : '✗' }}</span>
       </div>
+      <div style="display: flex; gap: 8px">
+        <button @click="clearCtrl" style="background: #C62828; color: #fff; border: none; padding: 5px 14px; font-size: 12px; cursor: pointer; border-radius: 3px">清空服务器数据</button>
+        <span v-if="ctrlMsg" :style="{ color: ctrlMsgColor, fontSize: '12px' }">{{ ctrlMsg }}</span>
+      </div>
     </div>
   </div>
 </template>
@@ -87,9 +91,11 @@ const testResult = ref<boolean | null>(null)
 const serverMsg = ref('')
 const serverMsgColor = ref('#4CAF50')
 
-const ctrlHost = ref('')
-const ctrlPort = ref(8000)
+const ctrlHost = ref('39.107.253.73')
+const ctrlPort = ref(8080)
 const ctrlOk = ref<boolean | null>(null)
+const ctrlMsg = ref('')
+const ctrlMsgColor = ref('#4CAF50')
 
 const mode = ref('cumulative')
 const interval = ref(10)
@@ -121,10 +127,28 @@ async function testTranspond() {
 async function testCtrl() {
   ctrlOk.value = null
   try {
-    const r = await fetch(`http://${ctrlHost.value}:${ctrlPort.value}`, { method: 'GET' })
+    const r = await fetch(`http://${ctrlHost.value}:${ctrlPort.value}/status`, { method: 'GET' })
     ctrlOk.value = r.ok
   } catch {
     ctrlOk.value = false
+  }
+}
+
+async function clearCtrl() {
+  ctrlMsg.value = ''
+  try {
+    const url = `http://${ctrlHost.value}:${ctrlPort.value}/debug`
+    const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{"action":"clear"}' })
+    if (r.ok) {
+      ctrlMsg.value = '已清空'
+      ctrlMsgColor.value = '#4CAF50'
+    } else {
+      ctrlMsg.value = '清空失败'
+      ctrlMsgColor.value = '#f44336'
+    }
+  } catch {
+    ctrlMsg.value = '清空失败'
+    ctrlMsgColor.value = '#f44336'
   }
 }
 

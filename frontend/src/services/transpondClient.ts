@@ -13,8 +13,6 @@ export interface TranspondQueryParams {
   limit?: number
 }
 
-export type StreamMode = 'all' | 'location' | 'sensor'
-
 const DEFAULT_TIMEOUT = 30000
 
 export function createTranspondClient(baseUrl: string, timeout = DEFAULT_TIMEOUT) {
@@ -79,11 +77,11 @@ export function createTranspondClient(baseUrl: string, timeout = DEFAULT_TIMEOUT
     },
 
     // WS /stream — 实时推送
-    connectStream(mode: StreamMode, onMessage: (msg: unknown) => void): WebSocket {
+    connectStream(mode: 'all' | 'location' | 'sensor', onMessage: (msg: any) => void): WebSocket {
       const wsUrl = baseUrl.replace(/^http/, 'ws').replace(/\/+$/, '') + `/stream?mode=${mode}`
       const ws = new WebSocket(wsUrl)
       ws.onmessage = (e) => {
-        try { onMessage(JSON.parse(e.data)) } catch { /* ignore parse errors */ }
+        try { onMessage(JSON.parse(e.data)) } catch { /* ignore */ }
       }
       return ws
     },

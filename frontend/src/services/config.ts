@@ -8,6 +8,8 @@ import { load } from 'js-yaml'
 interface FrontendConfig {
   backend: { host: string; port: number }
   transpond: { host: string; port: number }
+  control?: { host: string; port: number }
+  timeout?: { backend_ms: number; transpond_ms: number }
 }
 
 let _config: FrontendConfig | null = null
@@ -28,8 +30,27 @@ export async function loadConfig(): Promise<FrontendConfig> {
       host: parsed?.transpond?.host || 'localhost',
       port: parsed?.transpond?.port || 8001,
     },
+    control: {
+      host: parsed?.control?.host || '127.0.0.1',
+      port: parsed?.control?.port || 8080,
+    },
+    timeout: {
+      backend_ms: parsed?.timeout?.backend_ms || 30000,
+      transpond_ms: parsed?.timeout?.transpond_ms || 30000,
+    },
   }
   return _config
+}
+
+export function getControlUrl(): string {
+  const c = cfg()
+  if (!c.control) return 'http://127.0.0.1:8080'
+  return `http://${c.control.host}:${c.control.port}`
+}
+
+export function getTimeout() {
+  const c = cfg()
+  return c.timeout || { backend_ms: 30000, transpond_ms: 30000 }
 }
 
 export function getConfig(): FrontendConfig {

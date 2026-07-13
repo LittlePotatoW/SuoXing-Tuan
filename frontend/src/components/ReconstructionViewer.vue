@@ -139,14 +139,14 @@ function addMesh(data: { vertices: number[]; faces: number[]; vertex_count: numb
     geo.computeVertexNormals()
   }
 
-  const hasColor = data.vertex_colors && data.vertex_colors.length === data.vertex_count * 3
-  if (hasColor) {
+  const ok = data.vertex_colors && data.vertex_colors.length === data.vertex_count * 3
+  if (ok && data.vertex_colors) {
     geo.setAttribute('color', new THREE.BufferAttribute(new Uint8Array(data.vertex_colors), 3, true))
   }
 
   const mat = new THREE.MeshStandardMaterial({
-    vertexColors: hasColor,
-    color: hasColor ? 0xffffff : 0x808080,
+    vertexColors: ok,
+    color: ok ? 0xffffff : 0x808080,
     side: THREE.DoubleSide, roughness: 0.6, metalness: 0.0
   })
   meshGroup.add(new THREE.Mesh(geo, mat))
@@ -187,10 +187,12 @@ function _mergeLayers(layers: { vertices: number[]; faces: number[]; vertex_coun
   let vTotal = 0; let fTotal = 0
   for (const layer of layers) {
     const oldV = vTotal
-    verts.push(...layer.vertices); vTotal += layer.vertex_count
+    for (let j = 0; j < layer.vertices.length; j++) verts.push(layer.vertices[j])
+    vTotal += layer.vertex_count
     for (const fi of layer.faces) faces.push(fi + oldV); fTotal += layer.face_count
-    if (layer.vertex_colors && layer.vertex_colors.length === layer.vertex_count * 3) {
-      colors.push(...layer.vertex_colors)
+    const vc = layer.vertex_colors!
+    if (vc && vc.length === layer.vertex_count * 3) {
+      for (let j = 0; j < vc.length; j++) colors.push(vc[j])
     } else {
       for (let i = 0; i < layer.vertex_count; i++) colors.push(128, 128, 128)
     }

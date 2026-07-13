@@ -83,8 +83,19 @@ int main(int argc, char* argv[]) {
         printf("[%s] WS  client connected, mode=%s\n", time_buf,
                mode.empty() ? "all" : mode.c_str());
 
+        constexpr size_t MAX_LOC_PER_PUSH = 20;
+        constexpr size_t MAX_SENSOR_PER_PUSH = 5;  // sensor 帧含 base64 图片，单条 ~100KB
+
+        // 初始化为当前最新时间戳，只推送连接后到达的新帧
         uint64_t last_loc_ts = 0;
         uint64_t last_sensor_ts = 0;
+        {
+            std::lock_guard<std::mutex> lk(state->mtx);
+            auto loc_all = state->loc_store.query(0, 0);
+            if (!loc_all.empty()) last_loc_ts = loc_all.back()->timestamp_ns;
+            auto sen_all = state->sensor_store.query(0, 0);
+            if (!sen_all.empty()) last_sensor_ts = sen_all.back()->timestamp_ns;
+        }
 
         while (ws.is_open()) {
             std::string loc_json, sen_json;
@@ -93,7 +104,7 @@ int main(int argc, char* argv[]) {
                 std::lock_guard<std::mutex> lk(state->mtx);
 
                 if (send_loc) {
-                    auto items = state->loc_store.query(last_loc_ts, 0);
+                    auto items = state->loc_store.query(last_loc_ts, MAX_LOC_PER_PUSH);
                     if (!items.empty()) {
                         json arr = json::array();
                         for (auto p : items) {
@@ -110,7 +121,7 @@ int main(int argc, char* argv[]) {
                 }
 
                 if (send_sensor) {
-                    auto items = state->sensor_store.query(last_sensor_ts, 0);
+                    auto items = state->sensor_store.query(last_sensor_ts, MAX_SENSOR_PER_PUSH);
                     if (!items.empty()) {
                         json arr = json::array();
                         for (auto p : items) {

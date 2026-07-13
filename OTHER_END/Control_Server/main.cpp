@@ -6,6 +6,7 @@
 #include <iostream>
 #include <sstream>
 #include <cstring>
+#include <ctime>
 #include <chrono>
 #include <thread>
 #include "handlers.h"
@@ -134,6 +135,13 @@ int main(int argc, char* argv[]) {
             json m = {{"type","sys"},{"code",1000},{"msg","房间已满"}};
             ws.send(m.dump()); return;
         }
+
+        auto now = std::time(nullptr);
+        char time_buf[32];
+        std::strftime(time_buf, sizeof(time_buf), "%H:%M:%S", std::localtime(&now));
+        printf("[%s] WS /phone client connected, room=%s peer=%s (%zu phones)\n",
+               time_buf, room_id.c_str(), peer_id.c_str(), room->phone_count());
+
         json hi = {{"type","sys"},{"code",1001},{"peerId",peer_id},
                    {"msg","已加入房间 " + room_id + ", 当前 " +
                     std::to_string(room->phone_count()) + " 台设备在线"}};
@@ -151,6 +159,11 @@ int main(int argc, char* argv[]) {
                 handle_phone_msg(room, peer_id, msg);
             } catch (...) {}
         }
+
+        now = std::time(nullptr);
+        std::strftime(time_buf, sizeof(time_buf), "%H:%M:%S", std::localtime(&now));
+        printf("[%s] WS /phone client disconnected, room=%s peer=%s\n",
+               time_buf, room_id.c_str(), peer_id.c_str());
         on_phone_disconnect(room, peer_id);
     });
 
@@ -165,6 +178,12 @@ int main(int argc, char* argv[]) {
             json m = {{"type","sys"},{"code",1000},{"msg","房间已有小车"}};
             ws.send(m.dump()); return;
         }
+
+        auto now = std::time(nullptr);
+        char time_buf[32];
+        std::strftime(time_buf, sizeof(time_buf), "%H:%M:%S", std::localtime(&now));
+        printf("[%s] WS /robot connected, room=%s\n", time_buf, room_id.c_str());
+
         json ok = {{"type","sys"},{"code",1001},{"msg","配对成功"}};
         ws.send(ok.dump());
         on_robot_connect(room_id);
@@ -180,12 +199,22 @@ int main(int argc, char* argv[]) {
                     std::string t = msg["type"];
                     msg["timestamp_ns"] = std::chrono::duration_cast<std::chrono::nanoseconds>(
                         std::chrono::system_clock::now().time_since_epoch()).count();
-                    if (t == "tele") room->tele_store.push(msg);
-                    else if (t == "loc") room->loc_store.push(msg);
+                    if (t == "tele") {
+                        room->tele_store.push(msg);
+                        printf("[%s] robot tele data, room=%s\n", time_buf, room_id.c_str());
+                    }
+                    else if (t == "loc") {
+                        room->loc_store.push(msg);
+                        printf("[%s] robot loc data, room=%s\n", time_buf, room_id.c_str());
+                    }
                 }
                 handle_robot_msg(room, msg);
             } catch (...) {}
         }
+
+        now = std::time(nullptr);
+        std::strftime(time_buf, sizeof(time_buf), "%H:%M:%S", std::localtime(&now));
+        printf("[%s] WS /robot disconnected, room=%s\n", time_buf, room_id.c_str());
         on_robot_disconnect(room);
     });
 

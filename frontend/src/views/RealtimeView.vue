@@ -167,6 +167,8 @@ const relayInterval = ref(5000)
 const relayConnected = ref(false)
 const relayCache = ref<{ location: number; sensor: number } | null>(null)
 let relayTimer: any = null
+let lastRelayLocTs = 0
+let lastRelayDetTs = 0
 const seenLoc = new Set<number>()
 const seenDet = new Set<string>()
 let transpond: TranspondClient | null = null
@@ -244,6 +246,11 @@ function onSwitchMode(m: 'passive' | 'active') {
   mode.value = m
   seenLoc.clear()
   seenDet.clear()
+  if (m === 'passive') {
+    if (!pollTimer) pollTimer = setInterval(passivePoll, 1000)
+  } else {
+    if (pollTimer) { clearInterval(pollTimer); pollTimer = null }
+  }
 }
 
 function onChangeSubMode(sm: string) {
@@ -270,6 +277,7 @@ function stopAllTimers() {
   if (relayTimer) { clearInterval(relayTimer); relayTimer = null }
   if (replayTimer) { clearInterval(replayTimer); replayTimer = null }
   if (manualTimer) { clearInterval(manualTimer); manualTimer = null }
+  if (pollTimer) { clearInterval(pollTimer); pollTimer = null }
 }
 
 // ── 启动/停止 ──
@@ -277,9 +285,13 @@ function toggleRunning() {
   running.value = !running.value
   if (!running.value) {
     stopAllTimers()
+    if (pollTimer) { clearInterval(pollTimer); pollTimer = null }
     relayConnected.value = false
   } else if (mode.value === 'active') {
     startActive()
+  } else {
+    // 被动模式启动: 开始状态轮询
+    if (!pollTimer) pollTimer = setInterval(passivePoll, 1000)
   }
 }
 
@@ -298,7 +310,7 @@ async function doSave(type: 'location' | 'sensor' | 'fusion', data: any) {
     await fetch(`${backend}/api/debug/save/${type}?session=${encodeURIComponent(saveName.value)}`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data),
     })
-  } catch { /* ignore save errors */ }
+  } catch (e: any) { log(`保存失败: ${e.message || e}`, 'error') }
 }
 
 // ── 管线转发 ──
@@ -307,12 +319,7 @@ async function forwardLocation(data: any) {
     const ts = data.timestamp_ns
     if (seenLoc.has(ts)) return
     seenLoc.add(ts)
-    const r = await postJson(`${backend}/api/preprocessing/kinematics`, {
-      velocity: data.car?.kinematics?.velocity ?? 0.5,
-      steering_angle: data.car?.kinematics?.steering_angle ?? 0,
-      wheel_base: data.car?.kinematics?.wheel_base ?? 1.5,
-      timestamp_ns: ts,
-    })
+    const r = await postJson(`${backend}/api/realtime/feed/location`, data)
     if (r.ok) stats.location++
     await doSave('location', data)
     log(`POST /kinematics ts=${ts}`, 'success')
@@ -335,7 +342,7 @@ async function forwardSensor(data: any) {
       data = { ...data, car_position: { pose: { position: { x, y: 0, z: 0 }, rotation: { qw: 1, qx: 0, qy: 0, qz: 0 } }, timestamp_ns: data.timestamp_ns } }
     }
 
-    const r = await postJson(`${backend}/api/reconstruction/frame`, data)
+    const r = await postJson(`${backend}/api/realtime/feed/detection`, data)
     const j = await r.json()
     if (j.status === 'ok') stats.detection++
     await doSave('sensor', data)
@@ -351,36 +358,76 @@ async function forwardSensor(data: any) {
 
 function startRelay() {
   if (!running.value || mode.value !== 'active' || subMode.value !== 'relay') return
+  lastRelayLocTs = 0
+  lastRelayDetTs = 0
   transpond = createTranspondClient(relayUrl.value.trim(), replayTimeout.value * 1000)
-  relayPoll()
-  relayTimer = setInterval(relayPoll, relayInterval.value)
+
+  // 优先 WS 实时推送
+  try {
+    let streamWs: WebSocket | null = transpond.connectStream('all', (msg: any) => {
+      if (!running.value || mode.value !== 'active' || subMode.value !== 'relay') {
+        streamWs?.close(); return
+      }
+      if (msg.type === 'location' && msg.frames && !straightLineOn.value) {
+        for (const f of msg.frames) forwardLocation(f)
+      } else if (msg.type === 'sensor' && msg.frames) {
+        for (const f of msg.frames) forwardSensor(f)
+      }
+    })
+    streamWs.onopen = () => {
+      relayConnected.value = true
+      // 首次连接时快速拉取状态
+      transpond?.getStatus().then(({ data }) => {
+        if (data) relayCache.value = { location: data.location_cached ?? 0, sensor: data.sensor_cached ?? 0 }
+      })
+    }
+    streamWs.onclose = () => { relayConnected.value = false }
+    streamWs.onerror = () => {
+      relayConnected.value = false
+      // WS 失败 → fallback HTTP 轮询
+      if (running.value && mode.value === 'active' && subMode.value === 'relay') {
+        relayPoll()
+        relayTimer = setInterval(relayPoll, relayInterval.value)
+      }
+    }
+  } catch {
+    // WS 不支持 → HTTP 轮询
+    relayPoll()
+    relayTimer = setInterval(relayPoll, relayInterval.value)
+  }
 }
 
 async function relayPoll() {
   if (!transpond) return
-  const base = relayUrl.value.trim()
-  if (!base) return
-
   try {
-    // 轮询 location（匀速直线模式跳过）
     if (!straightLineOn.value) {
-      const { data: locData } = await transpond.getLocations({ limit: 10 })
+      const params: { limit: number; after?: number } = { limit: 10 }
+      if (lastRelayLocTs > 0) params.after = lastRelayLocTs
+      const { data: locData } = await transpond.getLocations(params)
       if (locData?.frames) {
-        for (const item of locData.frames) await forwardLocation(item)
+        for (const item of locData.frames) {
+          await forwardLocation(item)
+          if (item.timestamp_ns > lastRelayLocTs) lastRelayLocTs = item.timestamp_ns
+        }
+      }
+    } else {
+      await postJson(`${backend}/api/realtime/feed/location`, {
+        timestamp_ns: Date.now() * 1_000_000,
+        camera: [{ camera_pose: { position: { x: 0, y: 0, z: 1 }, rotation: { qw: 0.7071, qx: 0, qy: 0.7071, qz: 0 } } }],
+        car: { kinematics: { velocity: straightLineSpeed.value, steering_angle: 0, wheel_base: 1.5 } },
+      })
+    }
+    const detParams: { limit: number; after?: number } = { limit: 20 }
+    if (lastRelayDetTs > 0) detParams.after = lastRelayDetTs
+    const { data: detData } = await transpond.getSensors(detParams)
+    if (detData?.frames) {
+      for (const frame of detData.frames) {
+        await forwardSensor(frame)
+        if (frame.timestamp_ns > lastRelayDetTs) lastRelayDetTs = frame.timestamp_ns
       }
     }
-
-    // 轮询 sensor
-    const { data: detData } = await transpond.getSensors({ limit: 20 })
-    if (detData?.frames) {
-      for (const frame of detData.frames) await forwardSensor(frame)
-    }
-
-    // 缓存状态
     const { data: status } = await transpond.getStatus()
-    if (status) {
-      relayCache.value = { location: status.location_cached ?? 0, sensor: status.sensor_cached ?? 0 }
-    }
+    if (status) relayCache.value = { location: status.location_cached ?? 0, sensor: status.sensor_cached ?? 0 }
     relayConnected.value = true
   } catch {
     relayConnected.value = false
@@ -690,26 +737,37 @@ function connectBackendWs() {
   backendWs.onmessage = (e) => {
     try {
       const msg = JSON.parse(e.data)
-      console.log('[Realtime] WS msg:', msg.type, msg.data?.mesh?.vertex_count)
-      if (msg.type === 'rebuild_complete' && msg.data?.mesh) {
-        const isLayered = !!msg.layered
-        console.log(`[Realtime] rebuild: layered=${isLayered} verts=${msg.data.mesh.vertex_count} faces=${msg.data.mesh.face_count} layers=${_meshLayers.length}`)
-        if (isLayered) {
-          _meshLayers.push(msg.data.mesh)
-        } else {
-          _meshLayers = [msg.data.mesh]
-        }
-        const merged = viewerRef.value?._mergeLayers(_meshLayers)
-        if (merged) {
-          console.log(`[Realtime] merged: verts=${merged.vertex_count} faces=${merged.face_count} from ${_meshLayers.length} layers`)
-          viewerRef.value?.addMesh(merged)
-        }
-        viewerRef.value?.updateTrail(msg.data.camera_trail)
-        meshStats.frames = msg.data.total_frames || 0
-        crackList.value = msg.data.cracks || []
-        viewerRef.value?.addCracks(msg.data.cracks || [])
-        doSave('fusion', msg.data)
-        log(`重建完成 mesh=${meshStats.frames}`, 'success')
+      switch (msg.type) {
+        case 'load_started':
+          viewerRef.value?.resetScene(); _meshLayers = []
+          break
+        case 'load_progress':
+          if (msg.rebuild?.mesh) {
+            _meshLayers.push(msg.rebuild.mesh)
+            const merged = viewerRef.value?._mergeLayers(_meshLayers)
+            if (merged) viewerRef.value?.addMesh(merged)
+            if (msg.rebuild.camera_trail) viewerRef.value?.updateTrail(msg.rebuild.camera_trail)
+          }
+          break
+        case 'load_complete':
+          break
+        case 'rebuild_complete':
+          if (msg.data?.mesh) {
+            if (msg.layered) {
+              _meshLayers.push(msg.data.mesh)
+            } else {
+              _meshLayers = [msg.data.mesh]
+            }
+            const merged = viewerRef.value?._mergeLayers(_meshLayers)
+            if (merged) viewerRef.value?.addMesh(merged)
+            viewerRef.value?.updateTrail(msg.data.camera_trail)
+            meshStats.frames = msg.data.total_frames || 0
+            crackList.value = msg.data.cracks || []
+            viewerRef.value?.addCracks(msg.data.cracks || [])
+            doSave('fusion', msg.data)
+            log(`重建完成 mesh=${meshStats.frames}`, 'success')
+          }
+          break
       }
     } catch { /* ignore */ }
   }
@@ -719,6 +777,7 @@ function connectBackendWs() {
 
 // ── 被动模式状态轮询 ──
 async function passivePoll() {
+  if (!running.value) return
   try {
     const [estR, recR] = await Promise.all([
       fetch(`${backend}/api/preprocessing/estimator/stats`),
@@ -742,7 +801,6 @@ watch([relayInterval], () => {
 // ── 生命周期 ──
 onMounted(() => {
   connectBackendWs()
-  pollTimer = setInterval(passivePoll, 1000)
 })
 
 onUnmounted(() => {

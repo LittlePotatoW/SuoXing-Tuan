@@ -152,8 +152,13 @@ def _run_yolo(final: dict, eng) -> int:
     from reconstruction.projector import DefectProjector
 
     def _decode_rgb(image_data):
-        """解码 image bytes → RGB numpy array (与 main.py REST 推理路径一致)。"""
         try:
+            if isinstance(image_data, str):
+                import base64
+                image_data = base64.b64decode(image_data)
+            elif isinstance(image_data, bytes) and image_data[:2] != b'\xff\xd8':
+                import base64
+                image_data = base64.b64decode(image_data)
             pil_img = Image.open(BytesIO(image_data)).convert("RGB")
             return np.array(pil_img)
         except Exception:
