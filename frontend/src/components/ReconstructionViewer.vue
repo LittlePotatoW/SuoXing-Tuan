@@ -139,11 +139,16 @@ function addMesh(data: { vertices: number[]; faces: number[]; vertex_count: numb
     geo.computeVertexNormals()
   }
 
-  if (data.vertex_colors && data.vertex_colors.length === data.vertex_count * 3) {
+  const hasColor = data.vertex_colors && data.vertex_colors.length === data.vertex_count * 3
+  if (hasColor) {
     geo.setAttribute('color', new THREE.BufferAttribute(new Uint8Array(data.vertex_colors), 3, true))
   }
 
-  const mat = new THREE.MeshStandardMaterial({ vertexColors: true, side: THREE.DoubleSide, roughness: 0.6, metalness: 0.0 })
+  const mat = new THREE.MeshStandardMaterial({
+    vertexColors: hasColor,
+    color: hasColor ? 0xffffff : 0x808080,
+    side: THREE.DoubleSide, roughness: 0.6, metalness: 0.0
+  })
   meshGroup.add(new THREE.Mesh(geo, mat))
 
   const wireGeo = geo.clone()
