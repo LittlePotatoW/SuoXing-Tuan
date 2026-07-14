@@ -1,16 +1,29 @@
 [Unit]
 Description=Car Detection End - LiDAR + Camera Data Collection
 After=network.target
+Wants=network.target
 
 [Service]
 Type=simple
 User=jetson
 WorkingDirectory=/home/jetson/Car_detection_end
-ExecStart=/home/jetson/Car_detection_end/build/car_detection --host 192.168.1.100 --port 8001
+
+# 确保 Livox SDK 动态库可被找到
+Environment=LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH
+
+# 启动主程序 (修改 --host 为你的服务器 IP)
+ExecStart=/home/jetson/Car_detection_end/build/car_detection --host 39.105.129.111 --port 8001 --jpeg-quality 50 --cam-w 640 --cam-h 480
+
+# LiDAR 进程挂了自动重启程序
 Restart=on-failure
 RestartSec=5
+
+# 日志输出到 journald
 StandardOutput=journal
 StandardError=journal
+
+# 被 kill 后等 10s 超时
+TimeoutStopSec=10
 
 [Install]
 WantedBy=multi-user.target

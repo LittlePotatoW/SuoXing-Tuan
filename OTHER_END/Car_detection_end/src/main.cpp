@@ -1,6 +1,6 @@
 // ============================================================
 // Car_detection_end/src/main.cpp
-// 车端主程序 — 采集 LiDAR + 相机 → 发送到 Transpond_Server
+// 车端主程序 — 采集 LiDAR + 双相机 → 发送到 Transpond_Server
 // ============================================================
 
 // ══════════════════════════════════════════════
@@ -31,8 +31,10 @@ static const double DEFAULT_WHEEL_BASE   = 1.5;    // m
 #include <cstring>
 #include <fstream>
 #include <iostream>
+#include <memory>
 #include <string>
 #include <thread>
+#include <vector>
 
 static std::atomic<bool> g_running{true};
 static void on_signal(int) { g_running = false; }
@@ -74,24 +76,42 @@ int main(int argc, char** argv) {
     std::cout << "Camera: " << cam_w << "x" << cam_h << " jpeg_q=" << jpeg_quality << std::endl;
     std::cout << "Timing: loc=" << DEFAULT_LOC_MS << "ms det=" << DEFAULT_DET_MS << "ms" << std::endl;
 
-    // ── 相机 ──
+    // ── 双相机 ──
     CameraCapture::Config cam_cfg;
-    cam_cfg.device = "/dev/video0";
     cam_cfg.width  = cam_w;
     cam_cfg.height = cam_h;
     cam_cfg.jpeg_quality = jpeg_quality;
-    CameraCapture cam(cam_cfg);
-    if (!cam.open()) { std::cerr << "Camera init failed" << std::endl; return 1; }
+
+    std::vector<std::unique_ptr<CameraCapture>> cameras;
+    std::vector<Pose> camera_poses;
+
+    const char* devs[] = {"/dev/video0", "/dev/video1"};
+    for (auto* dev : devs) {
+        cam_cfg.device = dev;
+        auto cam = std::make_unique<CameraCapture>(cam_cfg);
+        if (cam->open()) {
+            cameras.push_back(std::move(cam));
+            // 默认相机外参 (需标定替换)
+            camera_poses.push_back({0.0, 0.0, 1.0, 0.7071, 0.0, 0.7071, 0.0});
+            std::cout << "Camera " << cameras.size() << ": " << dev << std::endl;
+        } else {
+            std::cerr << "Camera init failed: " << dev << std::endl;
+        }
+    }
+
+    if (cameras.empty()) {
+        std::cerr << "No camera available, exiting." << std::endl;
+        return 1;
+    }
 
     // ── LiDAR ──
     LidarCapture::Config lidar_cfg;
-    lidar_cfg.binary_path = "./lidar_bridge/lidar_stdout";
+    lidar_cfg.binary_path = "./build/lidar_bridge/lidar_stdout";
     lidar_cfg.max_points  = 30000;
     LidarCapture lidar(lidar_cfg);
     if (!lidar.start()) { std::cerr << "LiDAR init failed" << std::endl; return 1; }
 
-    // ── 车辆参数 ──
-    Pose camera_pose{0.0, 0.0, 1.0, 0.7071, 0.0, 0.7071, 0.0};
+    // ── HTTP 发送器 ──
     HttpSender sender(host, port);
 
     // ── 定位线程 ──
@@ -108,39 +128,82 @@ int main(int argc, char** argv) {
 
     // ── 检测线程 ──
     std::thread det_thread([&]() {
+        // "FAIL" 字体 — LiDAR 断连时显示
+        static const bool FONT_FAIL[4][5][5] = {
+            {{1,1,1,1,1}, {1,0,0,0,0}, {1,1,1,1,0}, {1,0,0,0,0}, {1,0,0,0,0}},
+            {{0,1,1,1,0}, {1,0,0,0,1}, {1,1,1,1,1}, {1,0,0,0,1}, {1,0,0,0,1}},
+            {{0,1,1,1,0}, {0,0,1,0,0}, {0,0,1,0,0}, {0,0,1,0,0}, {0,1,1,1,0}},
+            {{1,0,0,0,0}, {1,0,0,0,0}, {1,0,0,0,0}, {1,0,0,0,0}, {1,1,1,1,1}},
+        };
         int idx = 0;
         while (g_running) {
-            auto frame = lidar.read_frame(2000);
-            auto jpeg = cam.grab();
-            if (jpeg.empty()) {
-                std::this_thread::sleep_for(std::chrono::milliseconds(DEFAULT_DET_MS));
-                continue;
+            auto now_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                std::chrono::system_clock::now().time_since_epoch()).count();
+
+            // 1 秒内收集 LiDAR 帧
+            std::vector<LidarCapture::Frame> lidar_frames;
+            auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(950);
+            while (std::chrono::steady_clock::now() < deadline) {
+                auto f = lidar.read_frame(100);
+                if (!f.points.empty()) lidar_frames.push_back(std::move(f));
             }
 
+            // 合并所有帧的 points
             std::vector<float> pts;
             int pc = 0;
-            if (!frame.points.empty()) {
-                for (auto& p : frame.points) {
+            for (auto& f : lidar_frames) {
+                for (auto& p : f.points) {
                     pts.insert(pts.end(), {p.x, p.y, p.z});
                     pc++;
                 }
-            } else {
-                pts = {0.0f, 3.0f, 1.5f, 0.1f, 3.0f, 1.5f};
-                pc = 2;
             }
+
+            // LiDAR 无数据时用 "FAIL" 假点云
+            if (pc == 0) {
+                for (int li = 0; li < 4; li++) {
+                    float ox = li * 1.4f - 2.8f;
+                    for (int row = 0; row < 5; row++) {
+                        for (int col = 0; col < 5; col++) {
+                            if (FONT_FAIL[li][row][col]) {
+                                pts.insert(pts.end(), {
+                                    ox + col * 0.25f,
+                                    3.0f - row * 0.25f,
+                                    1.5f
+                                });
+                                pc++;
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 从所有相机抓图
+            std::vector<CameraFrame> cam_frames;
+            for (size_t ci = 0; ci < cameras.size(); ci++) {
+                auto jpeg = cameras[ci]->grab();
+                if (!jpeg.empty()) {
+                    cam_frames.push_back({std::move(jpeg), cam_w, cam_h, camera_poses[ci]});
+                }
+            }
+            if (cam_frames.empty()) continue;
 
             Pose car{0, 0, 0, 1, 0, 0, 0};
             auto body = build_detection_packet(
-                "car_" + std::to_string(idx), frame.timestamp_ns,
-                pts, pc, jpeg, cam_w, cam_h,
-                car, camera_pose,
+                "car_" + std::to_string(idx), now_ns,
+                pts, pc, cam_frames,
+                car,
                 DEFAULT_VELOCITY, DEFAULT_STEERING, DEFAULT_WHEEL_BASE);
 
             auto resp = sender.post("/frames", body);
+
+            // 日志: 显示每路相机 JPEG 大小
             std::cout << "det " << idx << ": HTTP " << resp.status_code
-                      << " pts=" << pc << " jpeg=" << jpeg.size()/1024 << "KB" << std::endl;
+                      << " frames=" << lidar_frames.size() << " pts=" << pc;
+            for (size_t ci = 0; ci < cam_frames.size(); ci++) {
+                std::cout << " jpeg" << ci << "=" << cam_frames[ci].jpeg.size()/1024 << "KB";
+            }
+            std::cout << std::endl;
             idx++;
-            std::this_thread::sleep_for(std::chrono::milliseconds(DEFAULT_DET_MS));
         }
     });
 
@@ -165,7 +228,9 @@ int main(int argc, char** argv) {
     wd_thread.join();
 
     lidar.stop();
-    cam.close();
+    for (auto& cam : cameras) {
+        cam->close();
+    }
     std::cout << "Stopped." << std::endl;
     return 0;
 }

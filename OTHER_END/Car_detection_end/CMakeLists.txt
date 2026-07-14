@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.14)
+cmake_minimum_required(VERSION 3.10)
 project(CarDetectionEnd VERSION 1.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
@@ -36,7 +36,6 @@ add_executable(car_detection
 )
 
 target_link_libraries(car_detection PRIVATE
-    lidar_bridge
     pthread
     ${CAMERA_LIBS}
 )

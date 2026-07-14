@@ -2,6 +2,7 @@
 #include <cstdint>
 #include <string>
 #include <vector>
+#include <memory>
 
 class CameraCapture {
 public:
@@ -22,10 +23,10 @@ public:
     void close();
     bool is_open() const;
 
-    // 抓取一帧 JPEG (MJPEG 模式, V4L2 驱动已编码)
+    // 抓取一帧 JPEG (MJPEG 模式)
     std::vector<uint8_t> grab();
 
 private:
-    Config cfg_;
-    int fd_ = -1;
+    struct Impl;
+    std::unique_ptr<Impl> impl_;
 };

@@ -250,7 +250,7 @@ function onSwitchMode(m: 'passive' | 'active') {
     running.value = false
   }
   clearData()
-  fetch(`${backend}/api/reconstruction/reset`, { method: 'POST' })
+  fetch(`${backend}/api/reconstruction/reset`, { method: 'POST' }).catch(() => {})
   mode.value = m
   seenLoc.clear()
   seenDet.clear()
@@ -267,7 +267,7 @@ function onChangeSubMode(sm: string) {
     running.value = false
   }
   clearData()
-  fetch(`${backend}/api/reconstruction/reset`, { method: 'POST' })
+  fetch(`${backend}/api/reconstruction/reset`, { method: 'POST' }).catch(() => {})
   // 清除回放加载数据
   replayLocFrames.value = []; replayDetFrames.value = []
   replayLoaded.value = false; replayLocCount.value = 0; replayDetCount.value = 0
@@ -307,6 +307,7 @@ function startActive() {
   if (subMode.value === 'relay') startRelay()
   else if (subMode.value === 'replay' && replayLoaded.value) replayPlay()
   else if (subMode.value === 'manual' && (manualDataStatus.value === 'full' || manualDataStatus.value === 'fusion_only')) manualPlay()
+  else log('请先加载数据', 'error')
 }
 
 // ── 保存辅助 ──
@@ -376,8 +377,17 @@ function startRelay() {
       if (!running.value || mode.value !== 'active' || subMode.value !== 'relay') {
         streamWs?.close(); return
       }
-      if (msg.type === 'location' && msg.frames && !straightLineOn.value) {
-        for (const f of msg.frames) forwardLocation(f)
+      if (msg.type === 'location' && msg.frames) {
+        if (straightLineOn.value) {
+          // 匀速直线: 丢弃 Transpond 的 loc，合成固定速度的 kinematics
+          postJson(`${backend}/api/realtime/feed/location`, {
+            timestamp_ns: Date.now() * 1_000_000,
+            camera: [{ camera_pose: { position: { x: 0, y: 0, z: 1 }, rotation: { qw: 0.7071, qx: 0, qy: 0.7071, qz: 0 } } }],
+            car: { kinematics: { velocity: straightLineSpeed.value, steering_angle: 0, wheel_base: 1.5 } },
+          })
+        } else {
+          for (const f of msg.frames) forwardLocation(f)
+        }
       } else if (msg.type === 'sensor' && msg.frames) {
         for (const f of msg.frames) forwardSensor(f)
       }
@@ -389,7 +399,14 @@ function startRelay() {
         if (data) relayCache.value = { location: data.location_cached ?? 0, sensor: data.sensor_cached ?? 0 }
       })
     }
-    streamWs.onclose = () => { relayConnected.value = false }
+    streamWs.onclose = () => {
+      relayConnected.value = false
+      // WS 断开 → fallback HTTP 轮询
+      if (running.value && mode.value === 'active' && subMode.value === 'relay') {
+        relayPoll()
+        relayTimer = setInterval(relayPoll, relayInterval.value)
+      }
+    }
     streamWs.onerror = () => {
       relayConnected.value = false
       // WS 失败 → fallback HTTP 轮询
@@ -489,7 +506,7 @@ async function replayLoad() {
 }
 
 function replayPlay() {
-  if (!replayLoaded.value) return
+  if (!replayLoaded.value) { log('请先加载回放数据', 'error'); return }
   replayPlaying.value = true
   replayCurrent.value = 0
   seenLoc.clear()
@@ -521,7 +538,15 @@ async function replayRenderAll() {
   const BATCH = 10
   for (let i = 0; i < allFrames.length; i += BATCH) {
     const batch = allFrames.slice(i, i + BATCH)
-    await Promise.all(batch.map(f => f.type === 'loc' && !straightLineOn.value ? forwardLocation(f.data) : f.type === 'det' ? forwardSensor(f.data) : Promise.resolve()))
+    await Promise.all(batch.map(f => f.type === 'loc'
+      ? (straightLineOn.value
+        ? postJson(`${backend}/api/realtime/feed/location`, {
+            timestamp_ns: Date.now() * 1_000_000,
+            camera: [{ camera_pose: { position: {x:0,y:0,z:1}, rotation: {qw:0.7071,qx:0,qy:0.7071,qz:0} } }],
+            car: { kinematics: { velocity: straightLineSpeed.value, steering_angle: 0, wheel_base: 1.5 } },
+          })
+        : forwardLocation(f.data))
+      : f.type === 'det' ? forwardSensor(f.data) : Promise.resolve()))
     replayCurrent.value = Math.min(i + BATCH, allFrames.length)
   }
   replayCurrent.value = allFrames.length
@@ -545,8 +570,16 @@ function doReplayStep() {
   }
 
   const frame = allFrames[replayCurrent.value]
-  if (frame.type === 'loc' && !straightLineOn.value) {
-    forwardLocation(frame.data)
+  if (frame.type === 'loc') {
+    if (straightLineOn.value) {
+      postJson(`${backend}/api/realtime/feed/location`, {
+        timestamp_ns: Date.now() * 1_000_000,
+        camera: [{ camera_pose: { position: { x: 0, y: 0, z: 1 }, rotation: { qw: 0.7071, qx: 0, qy: 0.7071, qz: 0 } } }],
+        car: { kinematics: { velocity: straightLineSpeed.value, steering_angle: 0, wheel_base: 1.5 } },
+      })
+    } else {
+      forwardLocation(frame.data)
+    }
   } else if (frame.type === 'det') {
     forwardSensor(frame.data)
   }
@@ -623,10 +656,11 @@ function manualPlay() {
     straightLineT0 = 0
     doManualStepFull()
   } else if (manualDataStatus.value === 'fusion_only') {
-    // 直接渲染 fusion 数据
     manualPlaying.value = true
     manualCurrent.value = 0
     doManualStepFusion()
+  } else {
+    log('请先加载手动数据', 'error')
   }
 }
 
@@ -658,8 +692,16 @@ function doManualStepFull() {
   }
 
   const frame = allFrames[manualCurrent.value]
-  if (frame.type === 'loc' && !straightLineOn.value) {
-    forwardLocation(frame.data)
+  if (frame.type === 'loc') {
+    if (straightLineOn.value) {
+      postJson(`${backend}/api/realtime/feed/location`, {
+        timestamp_ns: Date.now() * 1_000_000,
+        camera: [{ camera_pose: { position: { x: 0, y: 0, z: 1 }, rotation: { qw: 0.7071, qx: 0, qy: 0.7071, qz: 0 } } }],
+        car: { kinematics: { velocity: straightLineSpeed.value, steering_angle: 0, wheel_base: 1.5 } },
+      })
+    } else {
+      forwardLocation(frame.data)
+    }
   } else if (frame.type === 'det') {
     forwardSensor(frame.data)
   }
@@ -705,12 +747,12 @@ function doManualStepFusion() {
 
 async function toggleYolo() {
   yoloOn.value = !yoloOn.value
-  await postJson(`${backend}/api/realtime/toggle`, { yolo: yoloOn.value })
+  try { await postJson(`${backend}/api/realtime/toggle`, { yolo: yoloOn.value }) } catch {}
 }
 
 async function toggleRecon() {
   reconOn.value = !reconOn.value
-  await postJson(`${backend}/api/realtime/toggle`, { reconstruction: reconOn.value })
+  try { await postJson(`${backend}/api/realtime/toggle`, { reconstruction: reconOn.value }) } catch {}
 }
 
 function clearData() {
@@ -725,8 +767,8 @@ async function clearAll() {
   stopAllTimers()
   running.value = false
   await Promise.all([
-    fetch(`${backend}/api/reconstruction/reset`, { method: 'POST' }),
-    fetch(`${backend}/api/preprocessing/reset`, { method: 'POST' }),
+    fetch(`${backend}/api/reconstruction/reset`, { method: 'POST' }).catch(() => {}),
+    fetch(`${backend}/api/preprocessing/reset`, { method: 'POST' }).catch(() => {}),
   ])
   clearData()
   seenLoc.clear(); seenDet.clear()

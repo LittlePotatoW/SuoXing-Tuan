@@ -3,7 +3,7 @@
 #include <cmath>
 #include <string>
 
-// base64 编码 (简易实现, 不依赖外部库)
+// base64 编码 (简易实现)
 static const char B64_TABLE[] =
     "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
@@ -24,7 +24,7 @@ static std::string base64_encode(const std::vector<uint8_t>& data) {
     return out;
 }
 
-// ── 定位包: 匹配 Transpond_Server POST /location ──
+// ── 定位包 ──
 json build_location_packet(
     double velocity, double steering_angle,
     double wheel_base, uint64_t timestamp_ns)
@@ -47,14 +47,32 @@ json build_location_packet(
     };
 }
 
-// ── 检测包: 匹配 Transpond_Server POST /frames (批量格式) ──
+static json camera_view_json(const CameraFrame& cam) {
+    return {
+        {"image_data", base64_encode(cam.jpeg)},
+        {"width", cam.width},
+        {"height", cam.height},
+        {"camera_pose", {
+            {"position", {{"x", cam.pose.px}, {"y", cam.pose.py}, {"z", cam.pose.pz}}},
+            {"rotation", {{"qw", cam.pose.qw}, {"qx", cam.pose.qx},
+                          {"qy", cam.pose.qy}, {"qz", cam.pose.qz}}},
+        }},
+    };
+}
+
+// ── 检测包 (支持多相机) ──
 json build_detection_packet(
     const std::string& frame_id, uint64_t timestamp_ns,
     const std::vector<float>& points, int point_count,
-    const std::vector<uint8_t>& jpeg, int width, int height,
-    const Pose& car_pose, const Pose& camera_pose_in_body,
+    const std::vector<CameraFrame>& cameras,
+    const Pose& car_pose,
     double velocity, double steering_angle, double wheel_base)
 {
+    json views = json::array();
+    for (const auto& cam : cameras) {
+        views.push_back(camera_view_json(cam));
+    }
+
     return {
         {"count", 1},
         {"frames", json::array({{
@@ -64,20 +82,7 @@ json build_detection_packet(
                 {"points", points},
                 {"point_count", point_count},
             }},
-            {"camera_views", json::array({{
-                {"image_data", base64_encode(jpeg)},
-                {"width", width},
-                {"height", height},
-                {"camera_pose", {
-                    {"position", {{"x", camera_pose_in_body.px},
-                                  {"y", camera_pose_in_body.py},
-                                  {"z", camera_pose_in_body.pz}}},
-                    {"rotation", {{"qw", camera_pose_in_body.qw},
-                                  {"qx", camera_pose_in_body.qx},
-                                  {"qy", camera_pose_in_body.qy},
-                                  {"qz", camera_pose_in_body.qz}}},
-                }},
-            }})},
+            {"camera_views", views},
             {"car_position", {
                 {"pose", {
                     {"position", {{"x", car_pose.px}, {"y", car_pose.py}, {"z", car_pose.pz}}},

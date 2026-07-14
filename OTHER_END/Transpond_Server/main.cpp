@@ -18,8 +18,8 @@ class LogBuf : public std::stringbuf {
 
 int main(int argc, char* argv[]) {
     int port = 8001;
-    size_t max_loc = 2000;
-    size_t max_sensor = 200;
+    size_t max_loc = 50;
+    size_t max_sensor = 30;
 
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--port") && i+1 < argc) port = std::stoi(argv[++i]);
@@ -84,7 +84,7 @@ int main(int argc, char* argv[]) {
                mode.empty() ? "all" : mode.c_str());
 
         constexpr size_t MAX_LOC_PER_PUSH = 20;
-        constexpr size_t MAX_SENSOR_PER_PUSH = 5;  // sensor 帧含 base64 图片，单条 ~100KB
+        constexpr size_t MAX_SENSOR_PER_PUSH = 1;
 
         // 初始化为当前最新时间戳，只推送连接后到达的新帧
         uint64_t last_loc_ts = 0;
