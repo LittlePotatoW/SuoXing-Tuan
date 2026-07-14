@@ -4,13 +4,15 @@
 // ============================================================
 
 import { createApp } from 'vue'
+import { createPinia } from 'pinia'
 import App from './App.vue'
 import router from './router'
 import { loadConfig } from './services/config'
 
 async function bootstrap() {
   await loadConfig()
-  createApp(App).use(router).mount('#app')
+  const pinia = createPinia()
+  createApp(App).use(pinia).use(router).mount('#app')
 }
 
 bootstrap()

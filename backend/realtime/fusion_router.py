@@ -4,6 +4,7 @@
 # 接收两路数据 → 融合 → 送入重建管线
 # ============================================================
 
+import asyncio
 import logging
 
 from fastapi import APIRouter
@@ -19,6 +20,7 @@ reconstruction_enabled: bool = True
 location_count: int = 0
 detection_count: int = 0
 fusion_count: int = 0
+_state_lock = asyncio.Lock()
 
 # ── 可注入的外部依赖 ──
 _inference_engine = None
@@ -50,10 +52,11 @@ async def get_status():
 @router.post("/toggle")
 async def toggle(payload: dict):
     global yolo_enabled, reconstruction_enabled
-    if "yolo" in payload:
-        yolo_enabled = bool(payload["yolo"])
-    if "reconstruction" in payload:
-        reconstruction_enabled = bool(payload["reconstruction"])
+    async with _state_lock:
+        if "yolo" in payload:
+            yolo_enabled = bool(payload["yolo"])
+        if "reconstruction" in payload:
+            reconstruction_enabled = bool(payload["reconstruction"])
     return {"yolo_enabled": yolo_enabled, "reconstruction_enabled": reconstruction_enabled}
 
 
@@ -63,7 +66,8 @@ async def feed_location(payload: dict):
     try:
         # feed_location_data 内部已调用 StateEstimator.update_kinematics()，此处不重复
         fusion_manager.feed_location_data(payload)
-        location_count += 1
+        async with _state_lock:
+            location_count += 1
         return {"status": "ok", "count": location_count}
     except Exception as e:
         return {"status": "error", "message": str(e)}
@@ -75,7 +79,8 @@ async def feed_detection(payload: dict):
     try:
         ts = payload.get("timestamp_ns", 0)
         final = fusion_manager.process_detection(payload)
-        detection_count += 1
+        async with _state_lock:
+            detection_count += 1
         if not final:
             return {"status": "skipped", "reason": "no point_cloud"}
 
@@ -98,12 +103,13 @@ async def feed_detection(payload: dict):
             return _routes.engine.get_result()
 
         result = await loop.run_in_executor(None, _proc)
-        fusion_count += 1
+        async with _state_lock:
+            fusion_count += 1
 
         # YOLO
         yolo_hits = 0
         if yolo_enabled and _inference_engine and _inference_engine.loaded:
-            yolo_hits = _run_yolo(final, _routes.engine)
+            yolo_hits = _run_yolo(final, _routes.engine, _routes.CAMERA_INTRINSICS_CONFIG)
 
         if result and result.status == "completed":
             from reconstruction.routes import _broadcast
@@ -145,7 +151,7 @@ def _build_sensor_frame(final: dict, ts: int):
     )
 
 
-def _run_yolo(final: dict, eng) -> int:
+def _run_yolo(final: dict, eng, camera_intrinsics_config: list = None) -> int:
     import numpy as np
     from PIL import Image
     from io import BytesIO
@@ -164,7 +170,17 @@ def _run_yolo(final: dict, eng) -> int:
         except Exception:
             return None
 
-    proj = DefectProjector()
+    _proj_intrinsics = {}
+    if camera_intrinsics_config:
+        for _i, _cfg in enumerate(camera_intrinsics_config):
+            _proj_intrinsics[_i] = {
+                "fx": _cfg["K"][0][0], "fy": _cfg["K"][1][1],
+                "cx": _cfg["K"][0][2], "cy": _cfg["K"][1][2],
+                "width": _cfg["image_width"], "height": _cfg["image_height"],
+                "K": np.array(_cfg["K"], dtype=np.float64),
+                "dist_coeff": np.array(_cfg["dist_coeff"], dtype=np.float64),
+            }
+    proj = DefectProjector(camera_intrinsics=_proj_intrinsics if _proj_intrinsics else None)
     hits = 0
     car_pose = final["car_position"]["pose"]
     car_world = {"position": car_pose["position"], "rotation": car_pose["rotation"]}
@@ -178,15 +194,21 @@ def _run_yolo(final: dict, eng) -> int:
             logger.warning("YOLO inference failed for camera %d: %s", idx, exc)
             continue
         if not res or not res.detections: continue
+
+        cam_pose_body = {
+            "position": cv.get("camera_pose", {}).get("position", {"x": 0, "y": 0, "z": 0}),
+            "rotation": cv.get("camera_pose", {}).get("rotation", {"qw": 1, "qx": 0, "qy": 0, "qz": 0}),
+        }
+        depth = proj.compute_depth_from_point_cloud(
+            final["point_cloud"]["points"], cam_pose_body, car_world,
+        )
+
         for det in res.detections:
             x1, y1, x2, y2 = det.bbox
             u, v = (x1 + x2) / 2, (y1 + y2) / 2
             w = proj.project_pixel_defect(
-                u=float(u), v=float(v), depth=3.0, camera_index=idx,
-                camera_pose_in_body={
-                    "position": cv.get("camera_pose", {}).get("position", {"x": 0, "y": 0, "z": 0}),
-                    "rotation": cv.get("camera_pose", {}).get("rotation", {"qw": 1, "qx": 0, "qy": 0, "qz": 0}),
-                },
+                u=float(u), v=float(v), depth=depth, camera_index=idx,
+                camera_pose_in_body=cam_pose_body,
                 car_pose_in_world=car_world,
             )
             if w:

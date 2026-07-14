@@ -55,6 +55,7 @@ fusion = DataFusion(
 engine = ReconstructionEngine()
 _loader: Optional[SceneLoader] = None
 _ws_clients: list[WebSocket] = []
+_ws_lock = asyncio.Lock()
 
 router = APIRouter(prefix="/api/reconstruction", tags=["reconstruction"])
 
@@ -258,7 +259,8 @@ async def control_playback(payload: dict):
 @router.websocket("/ws")
 async def ws_reconstruction(ws: WebSocket):
     await ws.accept()
-    _ws_clients.append(ws)
+    async with _ws_lock:
+        _ws_clients.append(ws)
     logger.info("Reconstruction WS: client connected (%d total)", len(_ws_clients))
 
     try:
@@ -267,7 +269,8 @@ async def ws_reconstruction(ws: WebSocket):
             if data == "ping":
                 await ws.send_text("pong")
     except WebSocketDisconnect:
-        _ws_clients.remove(ws)
+        async with _ws_lock:
+            _ws_clients.remove(ws)
         logger.info("Reconstruction WS: client disconnected (%d total)", len(_ws_clients))
 
 
@@ -300,6 +303,8 @@ def _run_yolo_on_frame(frame, fused, eng) -> int:
             "fx": _cfg["K"][0][0], "fy": _cfg["K"][1][1],
             "cx": _cfg["K"][0][2], "cy": _cfg["K"][1][2],
             "width": _cfg["image_width"], "height": _cfg["image_height"],
+            "K": np.array(_cfg["K"], dtype=np.float64),
+            "dist_coeff": np.array(_cfg["dist_coeff"], dtype=np.float64),
         }
     proj = DefectProjector(camera_intrinsics=_cam_intrinsics if _cam_intrinsics else None)
     hits = 0
@@ -326,15 +331,19 @@ def _run_yolo_on_frame(frame, fused, eng) -> int:
         if not res or not res.detections:
             continue
         cp2 = cv.camera_pose
+        cam_pose_body = {
+            "position": {"x": cp2.position.x, "y": cp2.position.y, "z": cp2.position.z},
+            "rotation": {"qw": cp2.rotation.qw, "qx": cp2.rotation.qx, "qy": cp2.rotation.qy, "qz": cp2.rotation.qz},
+        }
+        depth = proj.compute_depth_from_point_cloud(
+            frame.point_cloud.points, cam_pose_body, car_world,
+        )
         for det in res.detections:
             x1, y1, x2, y2 = det.bbox
             u, v = (x1 + x2) / 2, (y1 + y2) / 2
             w = proj.project_pixel_defect(
-                u=float(u), v=float(v), depth=3.0, camera_index=idx,
-                camera_pose_in_body={
-                    "position": {"x": cp2.position.x, "y": cp2.position.y, "z": cp2.position.z},
-                    "rotation": {"qw": cp2.rotation.qw, "qx": cp2.rotation.qx, "qy": cp2.rotation.qy, "qz": cp2.rotation.qz},
-                },
+                u=float(u), v=float(v), depth=depth, camera_index=idx,
+                camera_pose_in_body=cam_pose_body,
                 car_pose_in_world=car_world,
             )
             if w:
@@ -347,11 +356,18 @@ def _run_yolo_on_frame(frame, fused, eng) -> int:
 
 
 async def _broadcast(payload: dict) -> None:
+    async with _ws_lock:
+        clients = list(_ws_clients)
     dead: list[WebSocket] = []
-    for ws in _ws_clients:
+    for ws in clients:
         try:
             await ws.send_json(payload)
         except Exception:
             dead.append(ws)
-    for ws in dead:
-        _ws_clients.remove(ws)
+    if dead:
+        async with _ws_lock:
+            for ws in dead:
+                try:
+                    _ws_clients.remove(ws)
+                except ValueError:
+                    pass  # already removed by disconnect handler

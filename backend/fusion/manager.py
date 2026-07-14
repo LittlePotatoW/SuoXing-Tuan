@@ -22,6 +22,7 @@
 
 import logging
 import math
+import threading
 from typing import Optional
 
 # TODO: 替换为同事提供的正式 StateEstimator 实例时，
@@ -68,6 +69,9 @@ class DataFusionManager:
         # TODO: 替换为同事提供的正式 StateEstimator 实例
         self._dr_engine: StateEstimator = dead_reckoning_engine
 
+        # ── 锁：保护所有共享状态 ──
+        self._lock = threading.Lock()
+
         # ── 外参缓存池: {camera_index: camera_pose_dict} ──
         # 从 location_data.camera[] 提取，按数组索引存储
         self._extrinsic_cache: dict[int, dict] = {}
@@ -108,55 +112,51 @@ class DataFusionManager:
           - car 整字段缺失 → 仅更新外参缓存
         """
         try:
-            timestamp_ns = location_data.get("timestamp_ns", 0)
+            with self._lock:
+                timestamp_ns = location_data.get("timestamp_ns", 0)
 
-            # ── 1. 缓存相机外参 ──
-            cameras = location_data.get("camera", [])
-            if cameras:
-                for idx, cam in enumerate(cameras):
-                    camera_pose = cam.get("camera_pose")
-                    if camera_pose is not None:
-                        # 验证位姿结构完整性
-                        if self._validate_pose(camera_pose):
-                            self._extrinsic_cache[idx] = camera_pose
-                        else:
-                            logger.warning("location_data camera[%d].camera_pose 结构不完整，跳过", idx)
-                logger.debug("外参缓存池更新: %d 个相机", len(self._extrinsic_cache))
-            else:
-                logger.debug("location_data 无 camera[] 字段，外参缓存保持不变 (%d 个相机)",
-                            len(self._extrinsic_cache))
-
-            # ── 2. 提取运动学参数并喂给航迹推算引擎 ──
-            car = location_data.get("car", {})
-            if car:
-                kinematics = car.get("kinematics")
-                if kinematics:
-                    # 补全可能缺失的字段
-                    kin = {
-                        "velocity": float(kinematics.get("velocity", 0.0)),
-                        "steering_angle": float(kinematics.get("steering_angle", 0.0)),
-                        "wheel_base": float(kinematics.get("wheel_base", 1.5)),
-                    }
-                    self._dr_engine.update_kinematics(
-                        velocity=kin["velocity"],
-                        steering_angle=kin["steering_angle"],
-                        timestamp_ns=timestamp_ns,
-                    )
-                    self._latest_kinematics = kin
+                # ── 1. 缓存相机外参 ──
+                cameras = location_data.get("camera", [])
+                if cameras:
+                    for idx, cam in enumerate(cameras):
+                        camera_pose = cam.get("camera_pose")
+                        if camera_pose is not None:
+                            if self._validate_pose(camera_pose):
+                                self._extrinsic_cache[idx] = camera_pose
+                            else:
+                                logger.warning("location_data camera[%d].camera_pose 结构不完整，跳过", idx)
+                    logger.debug("外参缓存池更新: %d 个相机", len(self._extrinsic_cache))
                 else:
-                    logger.debug("location_data.car 中无 kinematics 字段")
+                    logger.debug("location_data 无 camera[] 字段，外参缓存保持不变 (%d 个相机)",
+                                len(self._extrinsic_cache))
 
-                # car.pose 明确丢弃（final_data.md 规定）
-                # 不读取 car.pose 字段
-            else:
-                logger.debug("location_data 中无 car 字段")
+                # ── 2. 提取运动学参数并喂给航迹推算引擎 ──
+                car = location_data.get("car", {})
+                if car:
+                    kinematics = car.get("kinematics")
+                    if kinematics:
+                        kin = {
+                            "velocity": float(kinematics.get("velocity", 0.0)),
+                            "steering_angle": float(kinematics.get("steering_angle", 0.0)),
+                            "wheel_base": float(kinematics.get("wheel_base", 1.5)),
+                        }
+                        self._dr_engine.update_kinematics(
+                            velocity=kin["velocity"],
+                            steering_angle=kin["steering_angle"],
+                            timestamp_ns=timestamp_ns,
+                            wheel_base=kin["wheel_base"],
+                        )
+                        self._latest_kinematics = kin
+                    else:
+                        logger.debug("location_data.car 中无 kinematics 字段")
+                else:
+                    logger.debug("location_data 中无 car 字段")
 
-            self._last_location_timestamp_ns = timestamp_ns
-            self._location_count += 1
+                self._last_location_timestamp_ns = timestamp_ns
+                self._location_count += 1
 
         except Exception as e:
             logger.error("feed_location_data 异常: %s，丢弃本帧", e, exc_info=True)
-            # 不崩溃，丢弃本帧继续
 
     # ================================================================
     #  对外接口: 接收 detection_data 并触发融合
@@ -188,124 +188,112 @@ class DataFusionManager:
           kinematics     ← location_data 最新值（fallback: detection 自带）
         """
         try:
-            self._detection_count += 1
+            with self._lock:
+                self._detection_count += 1
 
-            # ── 1. frame_id ──
-            frame_id = detection_data.get("frame_id")
-            timestamp_ns = detection_data.get("timestamp_ns", 0)
-            if not frame_id:
-                frame_id = f"auto_{timestamp_ns}"
-                logger.info("frame_id 缺失，自动生成: %s", frame_id)
+                # ── 1. frame_id ──
+                frame_id = detection_data.get("frame_id")
+                timestamp_ns = detection_data.get("timestamp_ns", 0)
+                if not frame_id:
+                    frame_id = f"auto_{timestamp_ns}"
+                    logger.info("frame_id 缺失，自动生成: %s", frame_id)
 
-            # ── 2. 校验 point_cloud（必须字段） ──
-            # final_data.md: point_cloud 是唯一必须字段，缺失则丢弃整帧
-            point_cloud = detection_data.get("point_cloud")
-            if point_cloud is None:
-                logger.warning("Frame %s: point_cloud 缺失 → 丢弃整帧", frame_id)
-                self._skip_count += 1
-                return None
+                # ── 2. 校验 point_cloud（必须字段） ──
+                point_cloud = detection_data.get("point_cloud")
+                if point_cloud is None:
+                    logger.warning("Frame %s: point_cloud 缺失 → 丢弃整帧", frame_id)
+                    self._skip_count += 1
+                    return None
 
-            # 额外校验: point_cloud 内部点数组有效性
-            points = point_cloud.get("points", [])
-            if not points or len(points) < 3:
-                logger.warning("Frame %s: point_cloud.points 为空或点数不足 → 丢弃整帧", frame_id)
-                self._skip_count += 1
-                return None
+                points = point_cloud.get("points", [])
+                if not points or len(points) < 3:
+                    logger.warning("Frame %s: point_cloud.points 为空或点数不足 → 丢弃整帧", frame_id)
+                    self._skip_count += 1
+                    return None
 
-            # 确保 point_count 与 points 长度一致
-            point_count = point_cloud.get("point_count", len(points) // 3)
-            if point_count != len(points) // 3:
-                logger.debug("Frame %s: point_count 与 points 长度不一致，以实际为准", frame_id)
-                point_count = len(points) // 3
+                point_count = point_cloud.get("point_count", len(points) // 3)
+                if point_count != len(points) // 3:
+                    logger.debug("Frame %s: point_count 与 points 长度不一致，以实际为准", frame_id)
+                    point_count = len(points) // 3
 
-            # ── 3. 从航迹推算引擎查询世界位姿 ──
-            car_state = self._dr_engine.get_position(timestamp_ns)
-            if car_state is None:
-                logger.warning("Frame %s: 航迹推算引擎无数据 → 丢弃整帧", frame_id)
-                self._skip_count += 1
-                return None
-            # CarState → dict（兼容下游）
-            half = car_state.yaw / 2.0
-            car_pose = {
-                "position": {"x": car_state.x, "y": car_state.y, "z": car_state.z},
-                "rotation": {"qw": math.cos(half), "qx": 0.0, "qy": 0.0,
-                             "qz": math.sin(half)},
-            }
-
-            # ── 4. 处理 camera_views ──
-            # final_data.md: camera_views 缺失 → []
-            camera_views_out = []
-            raw_camera_views = detection_data.get("camera_views", [])
-            if raw_camera_views is None:
-                raw_camera_views = []
-
-            for idx, cam_view in enumerate(raw_camera_views):
-                # ── 外参: location 缓存优先 → detection fallback ──
-                camera_pose = self._get_camera_pose(idx, cam_view)
-
-                # ── 图片: 缺失 → null（跳过该相机，不参与颜色采样） ──
-                image_data = cam_view.get("image_data", None)
-
-                # ── 分辨率: 缺失默认 640×480 ──
-                width = cam_view.get("width", 640)
-                height = cam_view.get("height", 480)
-
-                camera_view_out = {
-                    "image_data": image_data,
-                    "width": width,
-                    "height": height,
-                    "camera_pose": camera_pose,
+                # ── 3. 从航迹推算引擎查询世界位姿 ──
+                car_state = self._dr_engine.get_position(timestamp_ns)
+                if car_state is None:
+                    logger.warning("Frame %s: 航迹推算引擎无数据 → 丢弃整帧", frame_id)
+                    self._skip_count += 1
+                    return None
+                half = car_state.yaw / 2.0
+                car_pose = {
+                    "position": {"x": car_state.x, "y": car_state.y, "z": car_state.z},
+                    "rotation": {"qw": math.cos(half), "qx": 0.0, "qy": 0.0,
+                                 "qz": math.sin(half)},
                 }
-                camera_views_out.append(camera_view_out)
 
-            # ── 5. kinematics ──
-            # 优先使用 location_data 最新值，fallback 到 detection 自带
-            kinematics = self._latest_kinematics
-            if kinematics is None:
-                det_kin = detection_data.get("kinematics")
-                if det_kin:
-                    kinematics = {
-                        "velocity": float(det_kin.get("velocity", 0.0)),
-                        "steering_angle": float(det_kin.get("steering_angle", 0.0)),
-                        "wheel_base": float(det_kin.get("wheel_base", 1.5)),
-                        "timestamp_ns": det_kin.get("timestamp_ns", timestamp_ns),
+                # ── 4. 处理 camera_views ──
+                camera_views_out = []
+                raw_camera_views = detection_data.get("camera_views", [])
+                if raw_camera_views is None:
+                    raw_camera_views = []
+
+                for idx, cam_view in enumerate(raw_camera_views):
+                    camera_pose = self._get_camera_pose(idx, cam_view)
+                    image_data = cam_view.get("image_data", None)
+                    width = cam_view.get("width", 640)
+                    height = cam_view.get("height", 480)
+                    camera_view_out = {
+                        "image_data": image_data,
+                        "width": width,
+                        "height": height,
+                        "camera_pose": camera_pose,
                     }
+                    camera_views_out.append(camera_view_out)
+
+                # ── 5. kinematics ──
+                kinematics = self._latest_kinematics
+                if kinematics is None:
+                    det_kin = detection_data.get("kinematics")
+                    if det_kin:
+                        kinematics = {
+                            "velocity": float(det_kin.get("velocity", 0.0)),
+                            "steering_angle": float(det_kin.get("steering_angle", 0.0)),
+                            "wheel_base": float(det_kin.get("wheel_base", 1.5)),
+                            "timestamp_ns": det_kin.get("timestamp_ns", timestamp_ns),
+                        }
+                    else:
+                        kinematics = {
+                            "velocity": 0.0,
+                            "steering_angle": 0.0,
+                            "wheel_base": 1.5,
+                            "timestamp_ns": timestamp_ns,
+                        }
                 else:
-                    kinematics = {
-                        "velocity": 0.0,
-                        "steering_angle": 0.0,
-                        "wheel_base": 1.5,
-                        "timestamp_ns": timestamp_ns,
-                    }
-            else:
-                # 更新 timestamp_ns 为当前帧时间
-                kinematics = dict(kinematics)
-                kinematics["timestamp_ns"] = timestamp_ns
+                    kinematics = dict(kinematics)
+                    kinematics["timestamp_ns"] = timestamp_ns
 
-            # ── 6. 组装最终输出 ──
-            final_data = {
-                "frame_id": frame_id,
-                "timestamp_ns": timestamp_ns,
-                "point_cloud": {
-                    "points": points,
-                    "point_count": point_count,
-                },
-                "camera_views": camera_views_out,
-                "car_position": {
-                    "pose": {
-                        "position": car_pose["position"],
-                        "rotation": car_pose["rotation"],
-                    },
+                # ── 6. 组装最终输出 ──
+                final_data = {
+                    "frame_id": frame_id,
                     "timestamp_ns": timestamp_ns,
-                },
-                "kinematics": kinematics,
-            }
+                    "point_cloud": {
+                        "points": points,
+                        "point_count": point_count,
+                    },
+                    "camera_views": camera_views_out,
+                    "car_position": {
+                        "pose": {
+                            "position": car_pose["position"],
+                            "rotation": car_pose["rotation"],
+                        },
+                        "timestamp_ns": timestamp_ns,
+                    },
+                    "kinematics": kinematics,
+                }
 
-            self._fusion_count += 1
-            logger.info("Frame %s: 融合完成, %d 点, %d 相机, pos=(%.3f, %.3f)",
-                        frame_id, point_count, len(camera_views_out),
-                        car_pose["position"]["x"], car_pose["position"]["y"])
-            return final_data
+                self._fusion_count += 1
+                logger.info("Frame %s: 融合完成, %d 点, %d 相机, pos=(%.3f, %.3f)",
+                            frame_id, point_count, len(camera_views_out),
+                            car_pose["position"]["x"], car_pose["position"]["y"])
+                return final_data
 
         except Exception as e:
             logger.error("process_detection 异常: %s，丢弃本帧", e, exc_info=True)
@@ -332,18 +320,15 @@ class DataFusionManager:
         返回:
           {"position": {"x":, "y":, "z":}, "rotation": {"qw":, "qx":, "qy":, "qz":}}
         """
-        # ── 优先从外参缓存池取 ──
         if camera_index in self._extrinsic_cache:
             logger.debug("camera[%d] 使用 location 缓存外参", camera_index)
             return self._extrinsic_cache[camera_index]
 
-        # ── Fallback: 使用 detection 自带的 camera_pose ──
         det_pose = cam_view.get("camera_pose")
         if det_pose and self._validate_pose(det_pose):
             logger.debug("camera[%d] 外参缓存缺失，fallback 到 detection camera_pose", camera_index)
             return det_pose
 
-        # ── 最终 Fallback: 默认值 ──
         logger.warning("camera[%d] 无可用外参，使用默认值（原点）", camera_index)
         return {
             "position": {"x": 0.0, "y": 0.0, "z": 0.0},
@@ -363,11 +348,9 @@ class DataFusionManager:
         rotation = pose.get("rotation")
         if not isinstance(position, dict) or not isinstance(rotation, dict):
             return False
-        # 检查 position 的 x/y/z 字段
         for key in ("x", "y", "z"):
             if key not in position:
                 return False
-        # 检查 rotation 的四元数字段
         for key in ("qw", "qx", "qy", "qz"):
             if key not in rotation:
                 return False

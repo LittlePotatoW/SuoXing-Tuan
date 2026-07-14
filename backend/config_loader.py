@@ -13,8 +13,15 @@ import yaml
 
 def _load() -> dict:
     path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.yaml")
-    with open(path, "r", encoding="utf-8") as f:
-        return yaml.safe_load(f)
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return yaml.safe_load(f) or {}
+    except FileNotFoundError:
+        print(f"[WARN] {path} not found, using defaults")
+        return {}
+    except yaml.YAMLError as e:
+        print(f"[WARN] {path} parse error: {e}")
+        return {}
 
 
 CONFIG = _load()

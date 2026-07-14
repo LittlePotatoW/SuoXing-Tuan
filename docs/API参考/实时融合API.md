@@ -264,4 +264,4 @@ time ─────────────────────────
          WS /stream (可选)            WS /stream (实时推送)
 ```
 
-中继站 API 详见 [OTHER_END/Transpond_Server/API.md](../OTHER_END/Transpond_Server/API.md)。
+中继站 API 详见 [OTHER_END/Transpond_Server/API.md](../../OTHER_END/Transpond_Server/API.md)。

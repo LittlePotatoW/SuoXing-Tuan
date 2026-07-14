@@ -37,6 +37,7 @@ MAX_STEERING = 0.8    # ~45°
 #  代码
 # ============================================================
 
+import bisect
 from collections import deque
 from dataclasses import dataclass
 import logging
@@ -103,7 +104,8 @@ class StateEstimator:
     # ================================================================
 
     def update_kinematics(
-        self, velocity: float, steering_angle: float, timestamp_ns: int
+        self, velocity: float, steering_angle: float, timestamp_ns: int,
+        wheel_base: float | None = None,
     ) -> CarState:
         """
         接收一帧运动学参数，更新小车状态。
@@ -118,6 +120,8 @@ class StateEstimator:
         # 步骤 1: 异常检测
         velocity = self._validate_velocity(velocity, timestamp_ns)
         steering_angle = self._clamp(steering_angle, -MAX_STEERING, MAX_STEERING)
+        if wheel_base is not None:
+            self.wheel_base = wheel_base
 
         # 步骤 2: 中值滤波
         self._vel_window.append(velocity)
@@ -150,7 +154,7 @@ class StateEstimator:
             velocity=v_filtered,
             steering=s_filtered,
         )
-        self._history.append(self._state)
+        bisect.insort(self._history, self._state, key=lambda s: s.timestamp_ns)
         if len(self._history) > self._history_max:
             self._history = self._history[-self._history_max // 2:]
         self._last_vel = v_filtered
@@ -171,7 +175,7 @@ class StateEstimator:
         self._state.z = z
         self._state.yaw = yaw
         self._state.timestamp_ns = timestamp_ns
-        self._history.append(self._state)
+        bisect.insort(self._history, self._state, key=lambda s: s.timestamp_ns)
         if len(self._history) > self._history_max:
             self._history = self._history[-self._history_max // 2:]
         return self._state
@@ -231,6 +235,18 @@ class StateEstimator:
     @property
     def history(self) -> list[CarState]:
         return self._history
+
+    def reset(self) -> None:
+        """重置估计器内部状态。"""
+        self._state = CarState(timestamp_ns=0)
+        self._vel_window.clear()
+        self._steer_window.clear()
+        self._last_valid_vel = 0.0
+        self._last_vel = 0.0
+        self._last_timestamp_ns = 0
+        self._history.clear()
+        self._update_count = 0
+        self._rejected_count = 0
 
     @property
     def stats(self) -> dict:

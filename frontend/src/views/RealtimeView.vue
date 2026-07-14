@@ -135,7 +135,6 @@ import ActionLogBar, { type LogEntry } from '../components/ActionLogBar.vue'
 import { getBaseUrl } from '../services/apiClient'
 import { getTranspondUrl } from '../services/config'
 import { createTranspondClient, type TranspondClient } from '../services/transpondClient'
-import { makeSyntheticJpegBase64, makeLocationData, makeSensorFrame, makeSensorFrameStraight, Car } from '../services/dataGenerator'
 
 const viewerRef = ref<any>(null)
 
@@ -169,8 +168,15 @@ const relayCache = ref<{ location: number; sensor: number } | null>(null)
 let relayTimer: any = null
 let lastRelayLocTs = 0
 let lastRelayDetTs = 0
+const DEDUP_MAX = 10_000
 const seenLoc = new Set<number>()
 const seenDet = new Set<string>()
+
+function _capSet(s: Set<unknown>) {
+  if (s.size <= DEDUP_MAX) return
+  const it = s.values()
+  for (let i = 0; i < 1000; i++) s.delete(it.next().value)
+}
 let transpond: TranspondClient | null = null
 
 // ── 回放模式 ──
@@ -221,6 +227,8 @@ function log(msg: string, level: LogEntry['level'] = 'info') {
 // ── 后端连接 ──
 let backendWs: WebSocket | null = null
 let pollTimer: any = null
+let wsDisposed = false
+let wsReconnectTimer: any = null
 
 const backend = getBaseUrl()
 
@@ -318,7 +326,7 @@ async function forwardLocation(data: any) {
   try {
     const ts = data.timestamp_ns
     if (seenLoc.has(ts)) return
-    seenLoc.add(ts)
+    seenLoc.add(ts); _capSet(seenLoc)
     const r = await postJson(`${backend}/api/realtime/feed/location`, data)
     if (r.ok) stats.location++
     await doSave('location', data)
@@ -332,7 +340,7 @@ async function forwardSensor(data: any) {
   try {
     const fid = data.frame_id || String(data.timestamp_ns)
     if (seenDet.has(fid)) return
-    seenDet.add(fid)
+    seenDet.add(fid); _capSet(seenDet)
 
     // 匀速直线: 覆盖 car_position
     if (straightLineOn.value) {
@@ -772,7 +780,12 @@ function connectBackendWs() {
     } catch { /* ignore */ }
   }
   backendWs.onerror = () => { backendConnected.value = false }
-  backendWs.onclose = () => { backendConnected.value = false; setTimeout(connectBackendWs, 3000) }
+  backendWs.onclose = () => {
+    backendConnected.value = false
+    if (wsDisposed) return
+    if (wsReconnectTimer) clearTimeout(wsReconnectTimer)
+    wsReconnectTimer = setTimeout(connectBackendWs, 3000)
+  }
 }
 
 // ── 被动模式状态轮询 ──
@@ -800,11 +813,17 @@ watch([relayInterval], () => {
 
 // ── 生命周期 ──
 onMounted(() => {
+  wsDisposed = false
   connectBackendWs()
 })
 
 onUnmounted(() => {
-  backendWs?.close()
+  wsDisposed = true
+  if (wsReconnectTimer) { clearTimeout(wsReconnectTimer); wsReconnectTimer = null }
+  if (backendWs) {
+    backendWs.onclose = null
+    backendWs.close()
+  }
   if (pollTimer) clearInterval(pollTimer)
   stopAllTimers()
 })

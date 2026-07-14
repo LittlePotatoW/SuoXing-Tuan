@@ -21,6 +21,7 @@ import logging
 from typing import Optional
 
 import numpy as np
+import cv2
 
 logger = logging.getLogger("data_pre_processing.projector")
 
@@ -71,6 +72,10 @@ class DefectProjector:
             "cy": 540.0,
             "width": 1920,
             "height": 1080,
+            "K": np.array([[1000.0, 0.0, 960.0],
+                           [0.0, 1000.0, 540.0],
+                           [0.0, 0.0, 1.0]], dtype=np.float64),
+            "dist_coeff": np.zeros(5, dtype=np.float64),
         }
 
         logger.info("DefectProjector 初始化完成, %d 个相机内参已配置",
@@ -82,7 +87,9 @@ class DefectProjector:
 
     def set_intrinsics(self, camera_index: int, fx: float, fy: float,
                        cx: float, cy: float, width: int = 1920,
-                       height: int = 1080) -> None:
+                       height: int = 1080,
+                       K: np.ndarray | None = None,
+                       dist_coeff: np.ndarray | None = None) -> None:
         """
         设置/更新指定相机的内参。
 
@@ -91,11 +98,18 @@ class DefectProjector:
           fx, fy: 焦距（像素）
           cx, cy: 主点（像素）
           width, height: 图像分辨率
+          K: 3x3 相机内参矩阵（可选，默认从 fx/fy/cx/cy 构建）
+          dist_coeff: 畸变系数 [k1,k2,p1,p2,k3]（可选，默认全零）
         """
+        default_K = np.array([[fx, 0.0, cx],
+                              [0.0, fy, cy],
+                              [0.0, 0.0, 1.0]], dtype=np.float64)
         self._intrinsics[camera_index] = {
             "fx": fx, "fy": fy,
             "cx": cx, "cy": cy,
             "width": width, "height": height,
+            "K": K if K is not None else default_K,
+            "dist_coeff": dist_coeff if dist_coeff is not None else np.zeros(5, dtype=np.float64),
         }
         logger.info("camera[%d] 内参已设置: fx=%.1f, fy=%.1f, cx=%.1f, cy=%.1f",
                     camera_index, fx, fy, cx, cy)
@@ -110,6 +124,26 @@ class DefectProjector:
     # ================================================================
     #  对外接口: 2D 像素 → 世界坐标
     # ================================================================
+
+    def _undistort_pixel(self, u: float, v: float, camera_index: int) -> tuple[float, float]:
+        """
+        对像素坐标做镜头畸变校正。
+
+        畸变为零时退化为恒等变换（不调用 cv2）。
+        """
+        K = self._get_intrinsics(camera_index)
+        camK = K.get("K")
+        dist = K.get("dist_coeff")
+        if camK is None or dist is None:
+            return u, v
+        if np.allclose(dist, 0.0):
+            return u, v
+        try:
+            src = np.array([[[u, v]]], dtype=np.float32)
+            out = cv2.undistortPoints(src, camK, dist, P=camK)
+            return float(out[0, 0, 0]), float(out[0, 0, 1])
+        except Exception:
+            return u, v
 
     def project_pixel_defect(
         self, u: float, v: float, depth: float,
@@ -139,9 +173,12 @@ class DefectProjector:
           {"x": float, "y": float, "z": float} 或 None（转换失败时）
         """
         try:
+            # ── Step 0: 镜头畸变校正（零畸变时恒等） ──
+            u_undist, v_undist = self._undistort_pixel(u, v, camera_index)
+
             # ── Step 1: 像素 → 相机局部 3D ──
             K = self._get_intrinsics(camera_index)
-            p_cam = self._pixel_to_camera_3d(u, v, depth, K)
+            p_cam = self._pixel_to_camera_3d(u_undist, v_undist, depth, K)
             if p_cam is None:
                 return None
 
@@ -397,6 +434,39 @@ class DefectProjector:
         T_inv[:3, :3] = R.T
         T_inv[:3, 3] = -R.T @ t
         return T_inv
+
+    # ================================================================
+    #  从点云计算深度（替代硬编码 3.0）
+    # ================================================================
+
+    def compute_depth_from_point_cloud(
+        self, points_flat: list[float],
+        camera_pose_in_body: dict,
+        car_pose_in_world: dict,
+        max_samples: int = 100,
+    ) -> float:
+        """
+        从世界坐标系点云计算该相机视角的代表性深度。
+
+        抽样变换到相机坐标系，取中位数正深度。无有效点时 fallback 3.0。
+        """
+        pts = np.array(points_flat, dtype=np.float64)
+        if pts.size < 3:
+            return 3.0
+        pts = pts.reshape(-1, 3)
+        if len(pts) > max_samples:
+            idxs = np.linspace(0, len(pts) - 1, max_samples, dtype=int)
+            pts = pts[idxs]
+
+        T_BW = self._pose_to_matrix(car_pose_in_world)
+        T_CB = self._pose_to_matrix(camera_pose_in_body)
+        T_WC = self._inverse_pose(T_BW) @ T_CB
+
+        ones = np.ones((len(pts), 1), dtype=np.float64)
+        cam_pts = (T_WC @ np.hstack([pts, ones]).T).T
+        depths = cam_pts[:, 2]
+        valid = depths[depths > 0]
+        return float(np.median(valid)) if valid.size > 0 else 3.0
 
     # ================================================================
     #  3D Gaussian Splatting 模型标注（预留接口）

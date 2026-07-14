@@ -66,3 +66,5 @@ model-training/yolo-training/datasets/*/
 model-training/yolo-training/runs/
 
 *.zip
+
+docs/待办

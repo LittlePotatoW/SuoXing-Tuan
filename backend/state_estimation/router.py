@@ -3,16 +3,9 @@
 # 运动学数据预处理 API — /kinematics /position /estimator/stats 端点
 # ============================================================
 
-import logging
-
 from fastapi import APIRouter
 
-from state_estimation.estimator import StateEstimator
-
-logger = logging.getLogger("state_estimation.router")
-
-# ── 模块级单例 ──
-estimator = StateEstimator()
+from realtime.fusion_router import estimator
 
 router = APIRouter(prefix="/api/preprocessing", tags=["preprocessing"])
 
@@ -93,13 +86,5 @@ async def get_estimator_stats():
 @router.post("/reset")
 async def reset_estimator():
     """重置航迹推算状态。"""
-    global estimator
-    estimator = StateEstimator()
+    estimator.reset()
     return {"status": "ok"}
-
-
-# ============================================================
-#  工具函数
-# ============================================================
-
-from common.transform import quat_to_yaw

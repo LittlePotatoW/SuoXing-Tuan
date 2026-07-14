@@ -17,27 +17,38 @@ let _config: FrontendConfig | null = null
 export async function loadConfig(): Promise<FrontendConfig> {
   if (_config) return _config
 
-  const resp = await fetch('/config.yaml')
-  const text = await resp.text()
-  const parsed = load(text) as any
+  try {
+    const resp = await fetch('/config.yaml')
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
+    const text = await resp.text()
+    const parsed = load(text) as any
 
-  _config = {
-    backend: {
-      host: parsed?.backend?.host || 'localhost',
-      port: parsed?.backend?.port || 8000,
-    },
-    transpond: {
-      host: parsed?.transpond?.host || 'localhost',
-      port: parsed?.transpond?.port || 8001,
-    },
-    control: {
-      host: parsed?.control?.host || '127.0.0.1',
-      port: parsed?.control?.port || 8080,
-    },
-    timeout: {
-      backend_ms: parsed?.timeout?.backend_ms || 30000,
-      transpond_ms: parsed?.timeout?.transpond_ms || 30000,
-    },
+    _config = {
+      backend: {
+        host: parsed?.backend?.host || 'localhost',
+        port: parsed?.backend?.port || 8000,
+      },
+      transpond: {
+        host: parsed?.transpond?.host || 'localhost',
+        port: parsed?.transpond?.port || 8001,
+      },
+      control: {
+        host: parsed?.control?.host || '127.0.0.1',
+        port: parsed?.control?.port || 8080,
+      },
+      timeout: {
+        backend_ms: parsed?.timeout?.backend_ms || 30000,
+        transpond_ms: parsed?.timeout?.transpond_ms || 30000,
+      },
+    }
+  } catch (e) {
+    console.warn('[Config] load failed, using defaults:', e)
+    _config = {
+      backend: { host: 'localhost', port: 8000 },
+      transpond: { host: 'localhost', port: 8001 },
+      control: { host: '127.0.0.1', port: 8080 },
+      timeout: { backend_ms: 30000, transpond_ms: 30000 },
+    }
   }
   return _config
 }
