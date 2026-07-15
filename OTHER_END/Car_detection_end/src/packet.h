@@ -22,6 +22,8 @@ json build_location_packet(
     double velocity, double steering_angle,
     double wheel_base, uint64_t timestamp_ns);
 
+// points 是 N×3 个 float (x0,y0,z0, x1,y1,z1, ...)
+// 内部会自动编码为 float32_base64
 json build_detection_packet(
     const std::string& frame_id, uint64_t timestamp_ns,
     const std::vector<float>& points, int point_count,

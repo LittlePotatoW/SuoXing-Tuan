@@ -206,6 +206,13 @@ class DataFusionManager:
                     return None
 
                 points = point_cloud.get("points", [])
+                # float32_base64 解码为 float 数组（向下兼容旧 JSON 数组格式）
+                if point_cloud.get("encoding") == "float32_base64" and isinstance(points, str):
+                    import base64
+                    import numpy as np
+                    pts_np = np.frombuffer(base64.b64decode(points), dtype=np.float32)
+                    points = pts_np.tolist()
+                    point_cloud["points"] = points  # 下游无感
                 if not points or len(points) < 3:
                     logger.warning("Frame %s: point_cloud.points 为空或点数不足 → 丢弃整帧", frame_id)
                     self._skip_count += 1

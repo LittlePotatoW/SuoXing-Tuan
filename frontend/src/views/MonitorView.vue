@@ -241,8 +241,13 @@ function processFrames(frames: any[]) {
 
   // ── 点云 ──
   const pc = latest.point_cloud
-  if (pc?.points && pc.points.length >= 3) {
-    pcViewerRef.value?.updatePointCloud(pc.points)
+  if (pc?.points) {
+    let pts = pc.points
+    if (pc.encoding === 'float32_base64' && typeof pts === 'string') {
+      const raw = Uint8Array.from(atob(pts), c => c.charCodeAt(0))
+      pts = Array.from(new Float32Array(raw.buffer))
+    }
+    if (pts.length >= 3) pcViewerRef.value?.updatePointCloud(pts)
   }
 }
 

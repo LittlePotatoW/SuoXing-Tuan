@@ -12,7 +12,7 @@ static const int    DEFAULT_JPEG_QUALITY = 50;     // 1-100
 static const int    DEFAULT_CAM_W        = 640;
 static const int    DEFAULT_CAM_H        = 480;
 static const int    DEFAULT_LOC_MS       = 200;    // 定位发送间隔
-static const int    DEFAULT_DET_MS       = 1000;   // 检测发送间隔
+static const int    DEFAULT_DET_MS       = 2000;   // 检测发送间隔
 static const int    DEFAULT_WDOG_MS      = 10000;  // 看门狗超时
 static const double DEFAULT_VELOCITY     = 0.5;    // m/s
 static const double DEFAULT_STEERING     = 0.0;    // rad
@@ -140,19 +140,17 @@ int main(int argc, char** argv) {
             auto now_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
                 std::chrono::system_clock::now().time_since_epoch()).count();
 
-            // 1 秒内收集 LiDAR 帧
-            std::vector<LidarCapture::Frame> lidar_frames;
-            auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(950);
+            // 循环清空管道防止 SDK 阻塞，只保留最后一帧 (2s 窗口)
+            LidarCapture::Frame frame;
+            auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(1950);
             while (std::chrono::steady_clock::now() < deadline) {
-                auto f = lidar.read_frame(100);
-                if (!f.points.empty()) lidar_frames.push_back(std::move(f));
+                auto f = lidar.read_frame(10);  // 10ms 超时，快速清空
+                if (!f.points.empty()) frame = std::move(f);
             }
-
-            // 合并所有帧的 points
             std::vector<float> pts;
             int pc = 0;
-            for (auto& f : lidar_frames) {
-                for (auto& p : f.points) {
+            if (!frame.points.empty()) {
+                for (auto& p : frame.points) {
                     pts.insert(pts.end(), {p.x, p.y, p.z});
                     pc++;
                 }
@@ -198,7 +196,7 @@ int main(int argc, char** argv) {
 
             // 日志: 显示每路相机 JPEG 大小
             std::cout << "det " << idx << ": HTTP " << resp.status_code
-                      << " frames=" << lidar_frames.size() << " pts=" << pc;
+                      << " pts=" << pc;
             for (size_t ci = 0; ci < cam_frames.size(); ci++) {
                 std::cout << " jpeg" << ci << "=" << cam_frames[ci].jpeg.size()/1024 << "KB";
             }

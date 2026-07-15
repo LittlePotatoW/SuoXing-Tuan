@@ -73,8 +73,9 @@ POST /api/reconstruction/frame
   "frame_id": "frame_0001",
   "timestamp_ns": 2000000000,
   "point_cloud": {
-    "points": [1.0, 0.0, 0.5, 1.1, 0.0, 0.5, 1.0, 0.1, 0.5],
-    "point_count": 3
+    "points": "<float32×3 base64>",
+    "encoding": "float32_base64",
+    "point_count": 10000
   },
   "car_position": {
     "pose": {
@@ -101,7 +102,8 @@ POST /api/reconstruction/frame
 |------|------|:---:|------|
 | `frame_id` | string | 否 | 帧标识 |
 | `timestamp_ns` | int | 是 | 时间戳 (ns) |
-| `point_cloud.points` | list[float] | 是 | 扁平点云 [x,y,z,...] |
+| `point_cloud.points` | string | 是 | float32×3 二进制 base64 编码 |
+| `point_cloud.encoding` | string | 否 | `"float32_base64"`，缺失时为旧 JSON 数组格式 |
 | `point_cloud.point_count` | int | 否 | 点数 |
 | `car_position.pose.position` | object | 是 | 小车世界坐标 {x,y,z} |
 | `car_position.pose.rotation` | object | 是 | 朝向四元数 {qw,qx,qy,qz} |

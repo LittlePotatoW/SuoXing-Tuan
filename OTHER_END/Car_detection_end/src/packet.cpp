@@ -60,7 +60,17 @@ static json camera_view_json(const CameraFrame& cam) {
     };
 }
 
-// ── 检测包 (支持多相机) ──
+// float32×3 → base64 编码 (点云压缩, 体积减半)
+static std::string encode_float32_base64(const std::vector<float>& pts, int point_count) {
+    // point_count 个点, 每个点 3 个 float (x,y,z) = point_count × 3 × 4 字节
+    size_t float_count = static_cast<size_t>(point_count) * 3;
+    if (pts.size() < float_count) float_count = pts.size();
+    const auto* bytes = reinterpret_cast<const uint8_t*>(pts.data());
+    std::vector<uint8_t> raw(bytes, bytes + float_count * sizeof(float));
+    return base64_encode(raw);
+}
+
+// ── 检测包 (float32_base64 点云 + 多相机) ──
 json build_detection_packet(
     const std::string& frame_id, uint64_t timestamp_ns,
     const std::vector<float>& points, int point_count,
@@ -79,7 +89,8 @@ json build_detection_packet(
             {"frame_id", frame_id},
             {"timestamp_ns", timestamp_ns},
             {"point_cloud", {
-                {"points", points},
+                {"points", encode_float32_base64(points, point_count)},
+                {"encoding", "float32_base64"},
                 {"point_count", point_count},
             }},
             {"camera_views", views},

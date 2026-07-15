@@ -12,6 +12,7 @@
 #include <chrono>
 #include <cstdint>
 #include <csignal>
+#include <cstdlib>
 #include <cstring>
 #include <iostream>
 #include <vector>
@@ -20,6 +21,8 @@
 #include "livox_sdk.h"
 #include <mutex>
 #include <thread>
+#include <fcntl.h>
+#include <unistd.h>
 #endif
 
 // ── 二进制帧格式 ──
@@ -195,46 +198,86 @@ static void mock_loop() {
 // ═══════════════════════════════════════════════════════════
 //  main
 // ═══════════════════════════════════════════════════════════
-int main() {
+int main(int argc, char** argv) {
     signal(SIGINT, on_signal);
     signal(SIGTERM, on_signal);
+
+    // 解析 -n <frames> 参数: 输出指定帧数后自动退出
+    int max_frames = 0;  // 0 = 不限
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "-n") == 0 && i + 1 < argc) {
+            max_frames = std::atoi(argv[++i]);
+        }
+    }
 
 #ifdef HAS_LIVOX_SDK
     std::cerr << "lidar_stdout: Livox SDK v2 mode" << std::endl;
 
+    // SDK 内部日志会直接写 stdout (不受 DisableConsoleLogger 控制).
+    // 在 SDK 初始化期间临时将 stdout 重定向到 /dev/null.
+    int stdout_backup = dup(STDOUT_FILENO);
+    int devnull = open("/dev/null", O_WRONLY);
+    dup2(devnull, STDOUT_FILENO);
+    close(devnull);
+
     if (!Init()) {
+        dup2(stdout_backup, STDOUT_FILENO);
+        close(stdout_backup);
         std::cerr << "lidar_stdout: Init() failed" << std::endl;
         return 1;
     }
+    DisableConsoleLogger();
 
     SetBroadcastCallback(on_broadcast);
     SetDeviceStateUpdateCallback(on_device_state);
 
     if (!Start()) {
+        dup2(stdout_backup, STDOUT_FILENO);
+        close(stdout_backup);
         std::cerr << "lidar_stdout: Start() failed" << std::endl;
         Uninit();
         return 1;
     }
 
+    // 等待设备连接 (此时 SDK 日志仍会继续输出, 保持重定向)
     std::cerr << "lidar_stdout: scanning for Mid-40..." << std::endl;
-
-    // 等待连接 + 采样
     while (g_running && !g_sampling) {
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
 
+    // 连接成功, 恢复 stdout 开始输出二进制帧
+    dup2(stdout_backup, STDOUT_FILENO);
+    close(stdout_backup);
     std::cerr << "lidar_stdout: running, outputting frames..." << std::endl;
 
-    // 保持运行
+    // 保持运行 (支持 -n 自动退出)
+    int frame_count = 0;
     while (g_running) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        if (max_frames > 0) {
+            // 粗略计数: 以 ~10Hz 估算, 100ms ≈ 1 帧
+            frame_count++;
+            if (frame_count >= max_frames) {
+                std::cerr << "lidar_stdout: captured " << frame_count
+                          << " frames, exiting" << std::endl;
+                break;
+            }
+        }
     }
 
-    // 清理
+    // 清理 — 再次屏蔽 stdout 防止 SDK Uninit 日志污染
+    stdout_backup = dup(STDOUT_FILENO);
+    devnull = open("/dev/null", O_WRONLY);
+    dup2(devnull, STDOUT_FILENO);
+    close(devnull);
+
     if (g_sampling) {
         LidarStopSampling(g_lidar_handle, nullptr, nullptr);
     }
     Uninit();
+
+    dup2(stdout_backup, STDOUT_FILENO);
+    close(stdout_backup);
     std::cerr << "lidar_stdout: stopped" << std::endl;
 #else
     std::cerr << "lidar_stdout: mock mode (NO Livox SDK)" << std::endl;
