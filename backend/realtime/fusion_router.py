@@ -204,6 +204,7 @@ def _run_yolo(final: dict, eng, camera_intrinsics_config: list = None) -> int:
     from PIL import Image
     from io import BytesIO
     from reconstruction.projector import DefectProjector
+    from reconstruction.routes import LIDAR_POSE_IN_BODY
 
     def _decode_rgb(image_data):
         try:
@@ -247,8 +248,12 @@ def _run_yolo(final: dict, eng, camera_intrinsics_config: list = None) -> int:
             "position": cv.get("camera_pose", {}).get("position", {"x": 0, "y": 0, "z": 0}),
             "rotation": cv.get("camera_pose", {}).get("rotation", {"qw": 1, "qx": 0, "qy": 0, "qz": 0}),
         }
+        lidar_pose_body = {
+            "position": {"x": LIDAR_POSE_IN_BODY[0], "y": LIDAR_POSE_IN_BODY[1], "z": LIDAR_POSE_IN_BODY[2]},
+            "rotation": {"qw": LIDAR_POSE_IN_BODY[3], "qx": LIDAR_POSE_IN_BODY[4], "qy": LIDAR_POSE_IN_BODY[5], "qz": LIDAR_POSE_IN_BODY[6]},
+        }
         depth = proj.compute_depth_from_point_cloud(
-            final["point_cloud"]["points"], cam_pose_body, car_world,
+            final["point_cloud"]["points"], cam_pose_body, LIDAR_POSE_IN_BODY,
         )
 
         for det in res.detections:

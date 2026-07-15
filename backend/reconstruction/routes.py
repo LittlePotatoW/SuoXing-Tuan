@@ -132,6 +132,7 @@ async def get_status():
 async def reset_engine(payload: dict = {}):
     """清空重建数据 + 应用新配置。"""
     global engine
+    engine.stop()
     engine = ReconstructionEngine(
         mode=payload.get("mode", engine.mode),
         rebuild_interval_frames=int(payload.get("interval", engine.rebuild_interval_frames)),

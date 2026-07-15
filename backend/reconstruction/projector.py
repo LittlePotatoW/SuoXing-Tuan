@@ -442,12 +442,13 @@ class DefectProjector:
     def compute_depth_from_point_cloud(
         self, points_flat: list[float],
         camera_pose_in_body: dict,
-        car_pose_in_world: dict,
+        sensor_pose_in_body: list[float] | None = None,
         max_samples: int = 100,
     ) -> float:
         """
-        从世界坐标系点云计算该相机视角的代表性深度。
+        从 LiDAR 坐标系点云计算该相机视角的代表性深度。
 
+        变换链: LiDAR → 车体 → 相机（不涉及世界坐标系）。
         抽样变换到相机坐标系，取中位数正深度。无有效点时 fallback 3.0。
         """
         pts = np.array(points_flat, dtype=np.float64)
@@ -458,12 +459,19 @@ class DefectProjector:
             idxs = np.linspace(0, len(pts) - 1, max_samples, dtype=int)
             pts = pts[idxs]
 
-        T_BW = self._pose_to_matrix(car_pose_in_world)
+        # LiDAR → body (use common transform which takes [x,y,z,qw,qx,qy,qz])
+        if sensor_pose_in_body and len(sensor_pose_in_body) >= 7:
+            from common.transform import pose_to_matrix
+            T_SB = pose_to_matrix(sensor_pose_in_body[:3], sensor_pose_in_body[3:])
+        else:
+            T_SB = np.eye(4, dtype=np.float64)
+        # camera → body, then body → camera
         T_CB = self._pose_to_matrix(camera_pose_in_body)
-        T_WC = self._inverse_pose(T_CB) @ self._inverse_pose(T_BW)
+        T_BC = self._inverse_pose(T_CB)
+        T_SC = T_BC @ T_SB  # LiDAR → camera
 
         ones = np.ones((len(pts), 1), dtype=np.float64)
-        cam_pts = (T_WC @ np.hstack([pts, ones]).T).T
+        cam_pts = (T_SC @ np.hstack([pts, ones]).T).T
         depths = cam_pts[:, 2]
         valid = depths[depths > 0]
         return float(np.median(valid)) if valid.size > 0 else 3.0

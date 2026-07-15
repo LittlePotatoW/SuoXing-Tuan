@@ -276,13 +276,13 @@ function pageLabel() {
 }
 
 // ── 模式切换 (停止当前运行 + 清空场景 + 恢复启动按钮) ──
-function onSwitchMode(m: 'passive' | 'active') {
+async function onSwitchMode(m: 'passive' | 'active') {
   if (running.value) {
     stopAllTimers()
     running.value = false
   }
   clearData()
-  fetch(`${backend}/api/reconstruction/reset`, { method: 'POST' }).catch(() => {})
+  await fetch(`${backend}/api/reconstruction/reset`, { method: 'POST' }).catch(() => {})
   mode.value = m
   seenLoc.clear()
   seenDet.clear()
@@ -293,13 +293,13 @@ function onSwitchMode(m: 'passive' | 'active') {
   }
 }
 
-function onChangeSubMode(sm: string) {
+async function onChangeSubMode(sm: string) {
   if (running.value) {
     stopAllTimers()
     running.value = false
   }
   clearData()
-  fetch(`${backend}/api/reconstruction/reset`, { method: 'POST' }).catch(() => {})
+  await fetch(`${backend}/api/reconstruction/reset`, { method: 'POST' }).catch(() => {})
   // 清除回放加载数据
   replayLocFrames.value = []; replayDetFrames.value = []
   replayLoaded.value = false; replayLocCount.value = 0; replayDetCount.value = 0
@@ -358,6 +358,7 @@ async function doSave(type: 'location' | 'sensor' | 'fusion' | 'fusion', data: a
 // ── 管线转发 ──
 async function forwardLocation(data: any) {
   try {
+    if (!running.value && mode.value !== 'active') return  // 已停止，丢弃残余帧
     const ts = data.timestamp_ns
     if (seenLoc.has(ts)) return
     const r = await postJson(`${backend}/api/realtime/feed/location`, data)
@@ -377,6 +378,7 @@ async function forwardLocation(data: any) {
 
 async function forwardSensor(data: any) {
   try {
+    if (!running.value && mode.value !== 'active') return  // 已停止，丢弃残余帧
     // 保存原始数据（翻转前），回放/手动加载时重新翻转
     await doSave('sensor', JSON.parse(JSON.stringify(data)))
 
@@ -614,7 +616,7 @@ async function replayRenderAll() {
       if (f.type === 'loc') {
         if (straightLineOn.value) {
           return postJson(`${backend}/api/realtime/feed/location`, {
-            timestamp_ns: Date.now() * 1_000_000,
+            timestamp_ns: f.ts,
             camera: [{ camera_pose: { position: { x: 0, y: 0, z: 1 }, rotation: { qw: 0.7071, qx: 0, qy: 0.7071, qz: 0 } } }],
             car: { kinematics: { velocity: straightLineSpeed.value, steering_angle: 0, wheel_base: 1.5 } },
           })
@@ -654,7 +656,7 @@ function doReplayStep() {
   if (frame.type === 'loc') {
     if (straightLineOn.value) {
       postJson(`${backend}/api/realtime/feed/location`, {
-        timestamp_ns: Date.now() * 1_000_000,
+        timestamp_ns: frame.ts,
         camera: [{ camera_pose: { position: { x: 0, y: 0, z: 1 }, rotation: { qw: 0.7071, qx: 0, qy: 0.7071, qz: 0 } } }],
         car: { kinematics: { velocity: straightLineSpeed.value, steering_angle: 0, wheel_base: 1.5 } },
       })
@@ -756,7 +758,7 @@ async function manualRenderAll() {
       } else {
         if (straightLineOn.value) {
           await postJson(`${backend}/api/realtime/feed/location`, {
-            timestamp_ns: Date.now() * 1_000_000,
+            timestamp_ns: f.timestamp_ns,
             camera: [{ camera_pose: { position: { x: 0, y: 0, z: 1 }, rotation: { qw: 0.7071, qx: 0, qy: 0.7071, qz: 0 } } }],
             car: { kinematics: { velocity: straightLineSpeed.value, steering_angle: 0, wheel_base: 1.5 } },
           })
@@ -796,7 +798,7 @@ async function doManualStepRaw() {
   // 匀速直线: 先喂合成 kinematics, 再发 sensor
   if (straightLineOn.value) {
     await postJson(`${backend}/api/realtime/feed/location`, {
-      timestamp_ns: Date.now() * 1_000_000,
+      timestamp_ns: f.timestamp_ns,
       camera: [{ camera_pose: { position: { x: 0, y: 0, z: 1 }, rotation: { qw: 0.7071, qx: 0, qy: 0.7071, qz: 0 } } }],
       car: { kinematics: { velocity: straightLineSpeed.value, steering_angle: 0, wheel_base: 1.5 } },
     })

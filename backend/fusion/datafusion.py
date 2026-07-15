@@ -97,21 +97,17 @@ class DataFusion:
 
         # ── 颜色采样: 世界系点云反投影到相机图像 ──
         point_colors: list[int] = []
-        if (
-            self.camera_intrinsics_list
-            and cameras_world
-            and images
-            and len(cameras_world) == len(images) == len(self.camera_intrinsics_list)
-        ):
+        if self.camera_intrinsics_list and cameras_world and images:
             try:
                 from fusion.coloring import sample_colors_from_cameras
+                # 只用相机1 (与 LiDAR 对齐)
                 colors_np = sample_colors_from_cameras(
-                    points_world, cameras_world, images, self.camera_intrinsics_list,
+                    points_world, cameras_world[:1], images[:1], self.camera_intrinsics_list[:1],
                 )
                 if colors_np is not None:
                     point_colors = colors_np.ravel().tolist()
-                    logger.debug("Color sampling OK: %d points, %d colors, %d images",
-                                 len(points_world), len(point_colors) // 3, len(images))
+                    logger.debug("Color sampling OK: %d points, %d colors",
+                                 len(points_world), len(point_colors) // 3)
                 else:
                     logger.warning("Color sampling returned None for frame %s (no points projected)", raw.frame_id)
             except Exception as exc:
@@ -119,12 +115,6 @@ class DataFusion:
         else:
             if not self.camera_intrinsics_list:
                 logger.debug("Color sampling skipped: no camera intrinsics configured")
-            elif len(cameras_world) != len(images):
-                logger.warning("Color sampling skipped: camera count mismatch (%d cameras, %d images)",
-                              len(cameras_world), len(images))
-            elif len(cameras_world) != len(self.camera_intrinsics_list):
-                logger.warning("Color sampling skipped: %d cameras but %d intrinsics configured",
-                              len(cameras_world), len(self.camera_intrinsics_list))
 
         # ── 打包 FusedFrame ──
         fused = FusedFrame(

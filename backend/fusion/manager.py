@@ -241,6 +241,7 @@ class DataFusionManager:
                 raw_camera_views = detection_data.get("camera_views", [])
                 if raw_camera_views is None:
                     raw_camera_views = []
+                raw_camera_views = raw_camera_views[:1]  # 暂时只使用相机0
 
                 for idx, cam_view in enumerate(raw_camera_views):
                     camera_pose = self._get_camera_pose(idx, cam_view)
@@ -313,33 +314,31 @@ class DataFusionManager:
 
     def _get_camera_pose(self, camera_index: int, cam_view: dict) -> dict:
         """
-        获取指定索引的相机外参。
-
-        优先级:
-          1. 外参缓存池 (location_data.camera[].camera_pose) — 标定值，优先使用
-          2. detection_data.camera_views[].camera_pose — fallback
-          3. 默认值（原点，无旋转）
+        从 config.yaml 读取相机外参（传感器数据不可信）。
 
         参数:
           camera_index: 相机在数组中的索引
-          cam_view: detection_data 中的 camera_view 对象
+          cam_view: 未使用，保留兼容
 
         返回:
           {"position": {"x":, "y":, "z":}, "rotation": {"qw":, "qx":, "qy":, "qz":}}
         """
-        if camera_index in self._extrinsic_cache:
-            logger.debug("camera[%d] 使用 location 缓存外参", camera_index)
-            return self._extrinsic_cache[camera_index]
-
-        det_pose = cam_view.get("camera_pose")
-        if det_pose and self._validate_pose(det_pose):
-            logger.debug("camera[%d] 外参缓存缺失，fallback 到 detection camera_pose", camera_index)
-            return det_pose
-
-        logger.warning("camera[%d] 无可用外参，使用默认值（原点）", camera_index)
+        try:
+            from config_loader import CONFIG
+            cams = CONFIG.get("sensors", {}).get("cameras", [])
+            if camera_index < len(cams):
+                pose = cams[camera_index].get("pose_in_body", {})
+                pos = pose.get("position", [0, 0, 1])
+                rot = pose.get("rotation", [0.7071, 0, 0.7071, 0])
+                return {
+                    "position": {"x": pos[0], "y": pos[1], "z": pos[2]},
+                    "rotation": {"qw": rot[0], "qx": rot[1], "qy": rot[2], "qz": rot[3]},
+                }
+        except Exception:
+            pass
         return {
-            "position": {"x": 0.0, "y": 0.0, "z": 0.0},
-            "rotation": {"qw": 1.0, "qx": 0.0, "qy": 0.0, "qz": 0.0},
+            "position": {"x": 0.0, "y": 0.0, "z": 1.0},
+            "rotation": {"qw": 0.7071, "qx": 0.0, "qy": 0.7071, "qz": 0.0},
         }
 
     @staticmethod

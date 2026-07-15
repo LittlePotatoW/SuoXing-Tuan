@@ -74,6 +74,7 @@ class ReconstructionEngine:
         self._total_points: int = 0
         self._last_rebuild_at_frame: int = 0
         self._rebuild_in_progress: bool = False      # 防双重重建
+        self._stopped: bool = False
         self._latest_mesh: MeshData | None = None
         self._cracks: list[CrackAnnotation] = []
         self._status: str = "accumulating"
@@ -82,9 +83,17 @@ class ReconstructionEngine:
     #  对外接口
     # ================================================================
 
+    def stop(self) -> None:
+        """停止引擎，清空累积数据。"""
+        with self._lock:
+            self._stopped = True
+            self._point_blocks = []
+            self._color_blocks = []
+            self._total_points = 0
+
     def add_frame(self, frame: FusedFrame) -> None:
         """接收一帧融合数据。到达阈值时自动触发表面重建。"""
-        if frame.point_count == 0:
+        if self._stopped or frame.point_count == 0:
             return
 
         pts = np.array(frame.points_world, dtype=np.float64).reshape(-1, 3)
@@ -158,6 +167,8 @@ class ReconstructionEngine:
     def _rebuild(self) -> None:
         """合并 → 降采样 → 去飞点 → 法线 → Poisson → 去伪面"""
         with self._lock:
+            if self._stopped:
+                return
             if not self._point_blocks:
                 self._status = "accumulating"
                 self._rebuild_in_progress = False
