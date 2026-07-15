@@ -19,6 +19,8 @@ dist-electron/
 frontend/node_modules/
 frontend/dist/
 frontend/config.json
+frontend/public/config.yaml
+backend/config.yaml
 
 # ONNX 模型文件
 frontend/public/models/*.onnx
@@ -43,11 +45,26 @@ Thumbs.db
 *.ckpt
 *.pt
 
+# 中转站（不入仓库）
+relay/
+
+# 模拟测试数据（大文件，不入仓库）
+test_end/detection_seq.json
+test_end/location_seq.json
+test_end/sensor_dump.json
+
 # 测试输出（生成的数据不入仓库）
 backend/tests/output/*
 backend/tests/fixtures/
-backend/data/test_scene/
+backend/test_data
+
+# 调试数据采集 (手动模式保存的数据)
+data_captures/
 
 # 训练数据集（本地管理，不入仓库）
 model-training/yolo-training/datasets/*/
 model-training/yolo-training/runs/
+
+*.zip
+
+docs/待办

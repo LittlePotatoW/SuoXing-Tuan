@@ -31,7 +31,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, onUnmounted } from 'vue'
 import { runInference } from '../services/apiClient'
 import DragDropZone from '../components/DragDropZone.vue'
 import ResultPanel from '../components/ResultPanel.vue'
@@ -69,4 +69,11 @@ async function onInfer() {
     inferring.value = false
   }
 }
+
+onUnmounted(() => {
+  if (imageSrc.value) {
+    URL.revokeObjectURL(imageSrc.value)
+    imageSrc.value = null
+  }
+})
 </script>

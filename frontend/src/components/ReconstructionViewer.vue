@@ -20,6 +20,7 @@ let renderer: THREE.WebGLRenderer
 let controls: OrbitControls
 let meshGroup: THREE.Group
 let trailGroup: THREE.Group
+let crackGroup: THREE.Group
 let animId = 0
 let disposed = false
 
@@ -49,13 +50,19 @@ onMounted(() => {
   trailGroup = new THREE.Group()
   scene.add(trailGroup)
 
-  // 参考网格 + 坐标轴
+  crackGroup = new THREE.Group()
+  scene.add(crackGroup)
+
   scene.add(new THREE.GridHelper(5, 20, 0x444444, 0x333333))
   scene.add(new THREE.AxesHelper(1))
 
-  // 响应窗口大小变化
-  window.addEventListener('resize', onResize)
+  scene.add(new THREE.AmbientLight(0xffffff, 0.7))
+  const d1 = new THREE.DirectionalLight(0xffffff, 0.9)
+  d1.position.set(2, 4, 3); scene.add(d1)
+  const d2 = new THREE.DirectionalLight(0xffffff, 0.5)
+  d2.position.set(-2, -1, -2); scene.add(d2)
 
+  window.addEventListener('resize', onResize)
   animId = requestAnimationFrame(loop)
 })
 
@@ -85,22 +92,55 @@ function loop() {
 
 // ── 外部方法 ──
 
-function updateMesh(data: { vertices: number[]; faces: number[]; vertex_count: number; face_count: number; vertex_colors?: number[] } | null) {
+function resetScene() {
   meshGroup.traverse((child) => {
     if (child instanceof THREE.Mesh) {
       child.geometry?.dispose()
-      if (Array.isArray(child.material)) {
-        child.material.forEach(m => m.dispose())
-      } else {
-        child.material?.dispose()
-      }
+      if (Array.isArray(child.material)) { child.material.forEach(m => m.dispose()) }
+      else { child.material?.dispose() }
     }
   })
   meshGroup.clear()
+  crackGroup.traverse((child) => {
+    if (child instanceof THREE.Mesh) {
+      child.geometry?.dispose()
+      if (Array.isArray(child.material)) { child.material.forEach(m => m.dispose()) }
+      else { child.material?.dispose() }
+    }
+  })
+  crackGroup.clear()
+  trailGroup.traverse((child) => {
+    if (child instanceof THREE.Line) {
+      child.geometry?.dispose()
+      if (Array.isArray(child.material)) { child.material.forEach(m => m.dispose()) }
+      else { child.material?.dispose() }
+    }
+  })
+  trailGroup.clear()
+}
+
+function addMesh(data: { vertices: number[]; faces: number[]; vertex_count: number; face_count: number; vertex_colors?: number[] } | null) {
   if (!data || !data.vertices.length) return
 
+  meshGroup.traverse((child) => {
+    if (child instanceof THREE.Mesh) {
+      child.geometry?.dispose()
+      if (Array.isArray(child.material)) { child.material.forEach(m => m.dispose()) }
+      else { child.material?.dispose() }
+    }
+  })
+  meshGroup.clear()
+
+  // Z-up (backend) → Y-up (Three.js): (x, y, z) → (x, z, -y)
+  const verts = new Float32Array(data.vertices.length)
+  for (let i = 0; i < data.vertex_count; i++) {
+    const j = i * 3
+    verts[j] = data.vertices[j]         // X → X
+    verts[j + 1] = data.vertices[j + 2] // Z → Y (up)
+    verts[j + 2] = -data.vertices[j + 1] // Y → Z (left→horizontal)
+  }
+
   const geo = new THREE.BufferGeometry()
-  const verts = new Float32Array(data.vertices)
   geo.setAttribute('position', new THREE.BufferAttribute(verts, 3))
 
   if (data.faces.length > 0) {
@@ -108,44 +148,68 @@ function updateMesh(data: { vertices: number[]; faces: number[]; vertex_count: n
     geo.computeVertexNormals()
   }
 
-  // 顶点颜色
-  if (data.vertex_colors && data.vertex_colors.length === data.vertex_count * 3) {
-    const colors = new Uint8Array(data.vertex_colors)
-    geo.setAttribute('color', new THREE.BufferAttribute(colors, 3, true))
+  const ok = data.vertex_colors && data.vertex_colors.length === data.vertex_count * 3
+  if (ok && data.vertex_colors) {
+    geo.setAttribute('color', new THREE.BufferAttribute(new Uint8Array(data.vertex_colors), 3, true))
   }
 
   const mat = new THREE.MeshStandardMaterial({
-    vertexColors: true,
-    side: THREE.DoubleSide,
-    roughness: 0.6,
-    metalness: 0.0,
+    vertexColors: ok,
+    color: ok ? 0xffffff : 0x808080,
+    side: THREE.DoubleSide, roughness: 0.6, metalness: 0.0
   })
-  const mesh = new THREE.Mesh(geo, mat)
-  meshGroup.add(mesh)
+  meshGroup.add(new THREE.Mesh(geo, mat))
 
-  // 线框叠加，方便辨认几何结构
+  const wireGeo = geo.clone()
   const wireMat = new THREE.MeshBasicMaterial({ color: 0x666666, wireframe: true })
-  const wire = new THREE.Mesh(geo, wireMat)
-  meshGroup.add(wire)
-
-  // 光照
-  const ambient = new THREE.AmbientLight(0xffffff, 0.7)
-  const d1 = new THREE.DirectionalLight(0xffffff, 0.9)
-  d1.position.set(2, 4, 3)
-  const d2 = new THREE.DirectionalLight(0xffffff, 0.5)
-  d2.position.set(-2, -1, -2)
-  meshGroup.add(ambient, d1, d2)
+  meshGroup.add(new THREE.Mesh(wireGeo, wireMat))
 }
 
 function updateTrail(trail: number[][] | null) {
   trailGroup.clear()
   if (!trail || trail.length < 2) return
-
-  const points = trail.map(p => new THREE.Vector3(p[0], p[1], p[2]))
+  // Z-up → Y-up: (x, y, z) → (x, z, -y)
+  const points = trail.map(p => new THREE.Vector3(p[0], p[2], -p[1]))
   const geo = new THREE.BufferGeometry().setFromPoints(points)
   const mat = new THREE.LineBasicMaterial({ color: 0x4fc3f7 })
   trailGroup.add(new THREE.Line(geo, mat))
 }
 
-defineExpose({ updateMesh, updateTrail })
+function addCracks(cracks: { position: { x: number; y: number; z: number }; confidence: number; crack_type: string }[]) {
+  crackGroup.clear()
+  if (!cracks || !cracks.length) return
+  for (const c of cracks) {
+    const size = 0.03 + c.confidence * 0.04
+    const geo = new THREE.SphereGeometry(size, 8, 8)
+    const color = c.crack_type === '裂缝' || c.crack_type === 'crack' ? 0xef5350
+      : c.crack_type === '渗漏' || c.crack_type === 'leakage' ? 0x42a5f5 : 0xffa726
+    const mat = new THREE.MeshBasicMaterial({ color })
+    const sphere = new THREE.Mesh(geo, mat)
+    // Z-up → Y-up: (x, y, z) → (x, z, -y)
+    sphere.position.set(c.position.x, c.position.z, -c.position.y)
+    crackGroup.add(sphere)
+  }
+}
+
+// 合并多个 mesh 层为一个大 mesh
+function _mergeLayers(layers: { vertices: number[]; faces: number[]; vertex_count: number; face_count: number; vertex_colors?: number[] }[]): { vertices: number[]; faces: number[]; vertex_count: number; face_count: number; vertex_colors?: number[] } | null {
+  if (!layers.length) return null
+  const verts: number[] = []; const faces: number[] = []; const colors: number[] = []
+  let vTotal = 0; let fTotal = 0
+  for (const layer of layers) {
+    const oldV = vTotal
+    for (let j = 0; j < layer.vertices.length; j++) verts.push(layer.vertices[j])
+    vTotal += layer.vertex_count
+    for (const fi of layer.faces) faces.push(fi + oldV); fTotal += layer.face_count
+    const vc = layer.vertex_colors!
+    if (vc && vc.length === layer.vertex_count * 3) {
+      for (let j = 0; j < vc.length; j++) colors.push(vc[j])
+    } else {
+      for (let i = 0; i < layer.vertex_count; i++) colors.push(128, 128, 128)
+    }
+  }
+  return { vertices: verts, faces, vertex_count: vTotal, face_count: fTotal, vertex_colors: colors }
+}
+
+defineExpose({ addMesh, updateTrail, resetScene, addCracks, _mergeLayers })
 </script>

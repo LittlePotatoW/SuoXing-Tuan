@@ -1,0 +1,71 @@
+# ============================================================
+# backend/config.example.yaml — 配置模板 (复制为 config.yaml 使用)
+# 复制: cp config.example.yaml config.yaml
+# config.yaml 不入 git
+# ============================================================
+
+server:
+  host: "127.0.0.1"
+  port: 8000
+  log_level: "INFO"
+  cors_origins: ["*"]
+  max_image_mb: 50
+  max_model_mb: 200
+  upload_chunk_bytes: 1048576
+
+model:
+  name: "crack-detector.pt"
+  conf_threshold: 0.3
+  iou_threshold: 0.5
+  input_size: 640
+
+sensors:
+  lidar_pose_in_body: [0.0, 0.0, 0.5, 1.0, 0.0, 0.0, 0.0]
+  cameras:
+    - K:
+        - [1084.1, 0.0, 638.8]
+        - [0.0, 1091.1, 342.2]
+        - [0.0, 0.0, 1.0]
+      dist_coeff: [-0.1059, 0.4524, -0.0018, 0.0008, -0.9783]
+      width: 1280
+      height: 720
+      pose_in_body:
+        position: [0.0, 0.0, 1.0]
+        rotation: [0.7071, 0.0, 0.7071, 0.0]
+    - K:
+        - [1084.1, 0.0, 638.8]
+        - [0.0, 1091.1, 342.2]
+        - [0.0, 0.0, 1.0]
+      dist_coeff: [-0.1059, 0.4524, -0.0018, 0.0008, -0.9783]
+      width: 1280
+      height: 720
+      pose_in_body:
+        position: [0.0, 1.0, 0.3]
+        rotation: [0.707, 0.0, 0.0, 0.707]
+
+reconstruction:
+  voxel_size: 0.01
+  rebuild_interval_frames: 10
+  max_points: 2000000
+  max_trail_points: 10000
+  poisson_depth: 8
+  outlier_nb_neighbors: 20
+  outlier_std_ratio: 2.0
+  density_filter_percentile: 0.10
+  normal_radius_factor: 5
+  normal_max_nn: 30
+  poisson_scale: 1.1
+  color_k_nearest: 5
+
+state_estimation:
+  wheel_base: 1.5
+  max_accel: 5.0
+  max_decel: 8.0
+  median_window: 5
+  min_speed_zero_check: 0.1
+  max_steering: 0.8
+  history_max: 10000
+
+fusion:
+  default_image_width: 640
+  default_image_height: 480

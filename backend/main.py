@@ -17,7 +17,6 @@ import os
 import json
 import asyncio
 import logging
-import shutil
 import tempfile
 from io import BytesIO
 from pathlib import Path
@@ -28,17 +27,23 @@ from PIL import Image
 from fastapi import FastAPI, Request, UploadFile, File, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
-from inference import InferenceEngine, InferenceResponse, DetectionResult
+from inference.engine import InferenceEngine
+from inference.schemas import InferenceResponse, DetectionResult
 from reconstruction.routes import router as reconstruction_router
+from state_estimation.router import router as preprocessing_router
+from realtime.fusion_router import router as realtime_router, set_inference_engine
+from debug.routes import router as debug_router
+
+from config_loader import CONFIG
 
 # ==================== 配置 ====================
 
-LOG_LEVEL = os.getenv("SX_LOG_LEVEL", "INFO")
-HOST = os.getenv("SX_HOST", "127.0.0.1")
-PORT = int(os.getenv("SX_PORT", "8000"))
-MAX_IMAGE_MB = int(os.getenv("SX_MAX_IMAGE_MB", "50"))
-MAX_MODEL_MB = int(os.getenv("SX_MAX_MODEL_MB", "200"))
-DEFAULT_MODEL = os.getenv("SX_DEFAULT_MODEL", "crack-detector.pt")
+LOG_LEVEL = os.getenv("SX_LOG_LEVEL", CONFIG.get("server", {}).get("log_level", "INFO"))
+HOST = os.getenv("SX_HOST", CONFIG.get("server", {}).get("host", "127.0.0.1"))
+PORT = int(os.getenv("SX_PORT", CONFIG.get("server", {}).get("port", 8000)))
+MAX_IMAGE_MB = int(os.getenv("SX_MAX_IMAGE_MB", CONFIG.get("server", {}).get("max_image_mb", 50)))
+MAX_MODEL_MB = int(os.getenv("SX_MAX_MODEL_MB", CONFIG.get("server", {}).get("max_model_mb", 200)))
+DEFAULT_MODEL = os.getenv("SX_DEFAULT_MODEL", CONFIG.get("model", {}).get("name", "crack-detector.pt"))
 
 # ==================== 日志 ====================
 
@@ -71,12 +76,16 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=os.getenv("SX_CORS_ORIGINS", "http://localhost:5173,http://localhost:5174").split(","),
-    allow_methods=["GET", "POST"],
+    allow_origins=["*"],
+    allow_methods=["*"],
     allow_headers=["*"],
 )
 
 app.include_router(reconstruction_router)
+app.include_router(preprocessing_router)
+app.include_router(realtime_router)
+app.include_router(debug_router)
+set_inference_engine(engine)
 
 # ==================== 请求追踪中间件 ====================
 

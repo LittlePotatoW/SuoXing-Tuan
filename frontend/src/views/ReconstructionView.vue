@@ -38,12 +38,14 @@ import ReconstructionViewer from '../components/ReconstructionViewer.vue'
 import { getBaseUrl } from '../services/apiClient'
 
 const viewerRef = ref<InstanceType<typeof ReconstructionViewer> | null>(null)
-const scenePath = ref('data/test_scene')
+const scenePath = ref('test_data/test_scene')
 const loading = ref(false)
 const loaded = ref(false)
 const currentFrame = ref(0)
 const totalFrames = ref(0)
 const stats = reactive({ total_frames: 0, total_points: 0, vertex_count: 0, face_count: 0 })
+const error = ref('')
+const _meshLayers: any[] = []
 
 let ws: WebSocket | null = null
 
@@ -56,9 +58,14 @@ async function loadScene() {
   loading.value = true
   const base = getBaseUrl()
 
+  // 先清空场景（不等 WS 消息，避免时序问题）
+  viewerRef.value?.resetScene()
+
   // 关闭旧 WebSocket 并创建新连接
-  if (ws) { ws.onmessage = null; ws.close() }
+  if (ws) { ws.onmessage = null; ws.onerror = null; ws.onclose = null; ws.close() }
   ws = new WebSocket(wsUrl())
+  ws.onerror = () => { error.value = 'WebSocket 连接失败，请检查后端是否启动' }
+  ws.onclose = () => { error.value = 'WebSocket 已断开' }
   ws.onmessage = (e) => {
     const msg = JSON.parse(e.data)
     if (!msg || !msg.type) return
@@ -74,7 +81,7 @@ async function loadScene() {
           stats.total_points = msg.rebuild.total_points ?? 0
           stats.vertex_count = msg.rebuild.mesh?.vertex_count || 0
           stats.face_count = msg.rebuild.mesh?.face_count || 0
-          if (msg.rebuild.mesh) viewerRef.value?.updateMesh(msg.rebuild.mesh)
+          _handleRebuild(msg.rebuild.mesh, msg.layered)
           if (msg.rebuild.camera_trail) viewerRef.value?.updateTrail(msg.rebuild.camera_trail)
         }
         break
@@ -85,7 +92,7 @@ async function loadScene() {
           stats.total_points = d.total_points ?? 0
           stats.vertex_count = d.mesh?.vertex_count || 0
           stats.face_count = d.mesh?.face_count || 0
-          if (d.mesh) viewerRef.value?.updateMesh(d.mesh)
+          _handleRebuild(d.mesh, msg.layered)
           if (d.camera_trail) viewerRef.value?.updateTrail(d.camera_trail)
         }
         break
@@ -118,6 +125,19 @@ async function sendControl(action: string) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ action }),
   })
+}
+
+function _handleRebuild(mesh: any, layered: boolean) {
+  if (!mesh) return
+  console.log(`[3D重建] rebuild: layered=${layered} verts=${mesh.vertex_count} layers=${_meshLayers.length}`)
+  if (layered) {
+    _meshLayers.push(mesh)
+  } else {
+    _meshLayers.length = 0; _meshLayers.push(mesh)
+  }
+  const merged = viewerRef.value?._mergeLayers(_meshLayers)
+  if (merged) viewerRef.value?.addMesh(merged)
+  if (!layered) _meshLayers.length = 0
 }
 
 onUnmounted(() => {

@@ -1,0 +1,3 @@
+# C++ 第三方头文件（编译器/CMake 自动获取，不入仓库）
+third_party/
+build/

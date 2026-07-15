@@ -1,0 +1,31 @@
+{
+  "server": {
+    "host": "127.0.0.1",
+    "port": 8001
+  },
+  "camera": {
+    "device": "/dev/video0",
+    "width": 640,
+    "height": 480,
+    "jpeg_quality": 50
+  },
+  "lidar": {
+    "binary_path": "./lidar_bridge/lidar_stdout",
+    "max_points": 30000
+  },
+  "vehicle": {
+    "wheel_base": 1.5,
+    "velocity": 0.5,
+    "steering_angle": 0.0,
+    "camera_pose": {
+      "position": [0.0, 0.0, 1.0],
+      "rotation": [0.7071, 0.0, 0.7071, 0.0]
+    },
+    "lidar_pose_in_body": [0.0, 0.0, 0.5, 1.0, 0.0, 0.0, 0.0]
+  },
+  "timing": {
+    "location_interval_ms": 200,
+    "detection_interval_ms": 1000,
+    "watchdog_timeout_ms": 10000
+  }
+}

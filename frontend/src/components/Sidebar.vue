@@ -29,9 +29,11 @@ const route = useRoute()
 const items = [
   { path: '/', label: '2D 检测', name: 'detection' },
   { path: '/reconstruction', label: '3D 重建', name: 'reconstruction' },
-  { path: '/page2', label: 'Page 2', name: 'page2' },
+  { path: '/realtime', label: '实时融合', name: 'realtime' },
+  { path: '/monitor', label: '实时监控', name: 'monitor' },
   { path: '/page3', label: 'Page 3', name: 'page3' },
   { path: '/page4', label: 'Page 4', name: 'page4' },
+  { path: '/config', label: '配置', name: 'config' },
 ]
 
 function linkStyle(item: typeof items[0]) {

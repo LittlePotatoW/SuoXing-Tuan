@@ -1,8 +1,6 @@
 # ============================================================
-#  文件: backend/reconstruction/engine.py
-#  所属: SuoXing-Tuan / V2 三维重建管线
-#  职责: 累积世界坐标系点云 → 表面重建(Mesh) → 输出结果
-#  依赖: Open3D, NumPy
+# backend/reconstruction/engine.py
+# 三维重建引擎 — 累积点云 → Poisson 表面重建 → 输出 Mesh
 # ============================================================
 
 # ============================================================
@@ -42,7 +40,7 @@ import threading
 
 import numpy as np
 
-from reconstruction.schemas import (
+from common.schemas import (
     FusedFrame, ReconstructionResult, MeshData, CrackAnnotation, Vector3,
 )
 
@@ -60,10 +58,12 @@ class ReconstructionEngine:
         voxel_size: float = VOXEL_SIZE,
         rebuild_interval_frames: int = REBUILD_INTERVAL_FRAMES,
         max_points: int = MAX_POINTS,
+        mode: str = "cumulative",
     ):
         self.voxel_size = voxel_size
         self.rebuild_interval_frames = rebuild_interval_frames
         self.max_points = max_points
+        self.mode = mode              # "cumulative" | "layered"
 
         # 内部状态
         self._lock = threading.RLock()
@@ -73,6 +73,8 @@ class ReconstructionEngine:
         self._frame_count: int = 0
         self._total_points: int = 0
         self._last_rebuild_at_frame: int = 0
+        self._rebuild_in_progress: bool = False      # 防双重重建
+        self._stopped: bool = False
         self._latest_mesh: MeshData | None = None
         self._cracks: list[CrackAnnotation] = []
         self._status: str = "accumulating"
@@ -81,9 +83,17 @@ class ReconstructionEngine:
     #  对外接口
     # ================================================================
 
+    def stop(self) -> None:
+        """停止引擎，清空累积数据。"""
+        with self._lock:
+            self._stopped = True
+            self._point_blocks = []
+            self._color_blocks = []
+            self._total_points = 0
+
     def add_frame(self, frame: FusedFrame) -> None:
         """接收一帧融合数据。到达阈值时自动触发表面重建。"""
-        if frame.point_count == 0:
+        if self._stopped or frame.point_count == 0:
             return
 
         pts = np.array(frame.points_world, dtype=np.float64).reshape(-1, 3)
@@ -108,9 +118,15 @@ class ReconstructionEngine:
             need_rebuild = self._total_points > self.max_points
             rebuild_triggered = self._frame_count - self._last_rebuild_at_frame >= self.rebuild_interval_frames
 
-        if need_rebuild:
-            self._compact_points()
-        if rebuild_triggered:
+            if need_rebuild:
+                self._compact_points()
+            if rebuild_triggered and not self._rebuild_in_progress:
+                self._rebuild_in_progress = True
+                should_rebuild = True
+            else:
+                should_rebuild = False
+
+        if should_rebuild:
             self._rebuild()
 
     def add_crack(self, x: float, y: float, z: float,
@@ -126,9 +142,9 @@ class ReconstructionEngine:
             ))
 
     def get_result(self) -> ReconstructionResult:
-        """返回当前最新重建结果。"""
+        """返回当前最新重建结果。completed 状态只返回一次，之后自动回到 accumulating。"""
         with self._lock:
-            return ReconstructionResult(
+            result = ReconstructionResult(
                 status=self._status,
                 mesh=self._latest_mesh or MeshData(),
                 cracks=list(self._cracks),
@@ -136,6 +152,9 @@ class ReconstructionEngine:
                 total_frames=self._frame_count,
                 total_points=self._total_points,
             )
+            if self._status == "completed":
+                self._status = "accumulating"  # 消费掉，防止每帧都广播旧 mesh
+            return result
 
     @property
     def frame_count(self) -> int:
@@ -148,8 +167,11 @@ class ReconstructionEngine:
     def _rebuild(self) -> None:
         """合并 → 降采样 → 去飞点 → 法线 → Poisson → 去伪面"""
         with self._lock:
+            if self._stopped:
+                return
             if not self._point_blocks:
                 self._status = "accumulating"
+                self._rebuild_in_progress = False
                 return
             self._status = "running"
             blocks = list(self._point_blocks)
@@ -160,7 +182,7 @@ class ReconstructionEngine:
         try:
             merged = np.vstack(blocks)
             merged_colors = np.vstack(color_blocks).astype(np.uint8) if color_blocks else None
-            logger.info("Rebuild #%d: %d points", frame_count, merged.shape[0])
+            logger.info("Rebuild #%d: %d points, mode=%s", frame_count, merged.shape[0], self.mode)
             mesh = self._reconstruct_surface(merged, merged_colors)
 
             with self._lock:
@@ -171,22 +193,32 @@ class ReconstructionEngine:
                     if mesh.has_vertex_colors():
                         vc_float = np.asarray(mesh.vertex_colors)
                         vc = (np.clip(vc_float, 0.0, 1.0) * 255).astype(np.uint8).ravel().tolist()
-                    self._latest_mesh = MeshData(
+                    md = MeshData(
                         vertices=verts.ravel().tolist(),
                         faces=faces.ravel().tolist(),
                         vertex_count=verts.shape[0],
                         face_count=faces.shape[0],
                         vertex_colors=vc,
                     )
+                    self._latest_mesh = md
+
+                    # 逐层模式：清空累积，下次只用新帧
+                    if self.mode == "layered":
+                        self._point_blocks = []
+                        self._color_blocks = []
+                        self._total_points = 0
+                    # 全量模式：不清空，下次重建用全量数据
+
                 self._status = "completed"
                 self._last_rebuild_at_frame = frame_count
-                v = self._latest_mesh.vertex_count if self._latest_mesh else 0
-                f = self._latest_mesh.face_count if self._latest_mesh else 0
 
         except Exception as e:
             logger.error("Rebuild failed: %s", e, exc_info=True)
             with self._lock:
                 self._status = "error"
+        finally:
+            with self._lock:
+                self._rebuild_in_progress = False
 
         elapsed = (time.perf_counter() - t0) * 1000
         logger.info("Rebuild done: %d verts, %d faces, %.0fms",
@@ -198,6 +230,7 @@ class ReconstructionEngine:
         import open3d as o3d
 
         has_color = colors is not None and len(colors) == len(points)
+        _t = time.perf_counter
 
         # 1. 创建点云（可选颜色）
         pcd = o3d.geometry.PointCloud()
@@ -224,6 +257,7 @@ class ReconstructionEngine:
             pcd_for_colors.colors = o3d.utility.Vector3dVector(np.asarray(pcd.colors))
 
         # 4. 估算法线
+        t0 = _t()
         pcd.estimate_normals(
             o3d.geometry.KDTreeSearchParamHybrid(
                 radius=self.voxel_size * 5, max_nn=30
@@ -237,15 +271,20 @@ class ReconstructionEngine:
         mesh, densities = o3d.geometry.TriangleMesh.create_from_point_cloud_poisson(
             pcd, depth=POISSON_DEPTH, width=0, scale=1.1, linear_fit=False
         )
+        t1 = _t()
 
         # 7. 去低密度伪面
         threshold = np.quantile(densities, DENSITY_FILTER_PERCENTILE)
         mesh.remove_vertices_by_mask(densities < threshold)
 
-        # 8. 颜色传递: 参考点云最近邻 → Mesh 顶点
+        # 8. 颜色传递: 参考点云 K 近邻加权 → Mesh 顶点
         if pcd_for_colors is not None and len(mesh.vertices) > 0:
-            self._transfer_colors_to_mesh(mesh, pcd_for_colors)
+            self._transfer_colors_to_mesh(mesh, pcd_for_colors, k=2)
+        t2 = _t()
 
+        logger.info("Rebuild timing: Poisson=%.0fms color=%.0fms pts=%d verts=%d",
+                     (t1 - t0) * 1000, (t2 - t1) * 1000,
+                     len(pcd.points), len(mesh.vertices))
         return mesh
 
     # ================================================================
@@ -270,20 +309,23 @@ class ReconstructionEngine:
 
     @staticmethod
     def _transfer_colors_to_mesh(mesh, pcd_colored, k: int = 5):
-        """K 近邻距离加权: 将参考点云颜色平滑传递到 Mesh 顶点。"""
+        """K 近邻距离加权: 将参考点云颜色平滑传递到 Mesh 顶点（scipy 批量查询）。"""
         import open3d as o3d
+        from scipy.spatial import KDTree
 
-        kdtree = o3d.geometry.KDTreeFlann(pcd_colored)
         verts = np.asarray(mesh.vertices)
+        pts = np.asarray(pcd_colored.points)
         colors_src = np.asarray(pcd_colored.colors)
 
-        vertex_colors = np.zeros((len(verts), 3), dtype=np.float64)
-        for i in range(len(verts)):
-            _, idx, dist2 = kdtree.search_knn_vector_3d(verts[i], k)
-            # 距离平方倒数加权
-            weights = 1.0 / np.maximum(np.asarray(dist2), 1e-12)
-            weights /= weights.sum()
-            for j in range(k):
-                vertex_colors[i] += weights[j] * colors_src[idx[j]]
+        tree = KDTree(pts)
+        dists, indices = tree.query(verts, k=min(k, len(pts)))
+        # dists: (V, K), indices: (V, K)
+
+        if k == 1:
+            vertex_colors = colors_src[indices]
+        else:
+            weights = 1.0 / np.maximum(dists, 1e-12)  # (V, K)
+            weights /= weights.sum(axis=1, keepdims=True)
+            vertex_colors = np.sum(colors_src[indices] * weights[..., np.newaxis], axis=1)
 
         mesh.vertex_colors = o3d.utility.Vector3dVector(vertex_colors)
