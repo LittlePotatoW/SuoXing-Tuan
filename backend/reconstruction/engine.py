@@ -133,9 +133,9 @@ class ReconstructionEngine:
             ))
 
     def get_result(self) -> ReconstructionResult:
-        """返回当前最新重建结果。"""
+        """返回当前最新重建结果。completed 状态只返回一次，之后自动回到 accumulating。"""
         with self._lock:
-            return ReconstructionResult(
+            result = ReconstructionResult(
                 status=self._status,
                 mesh=self._latest_mesh or MeshData(),
                 cracks=list(self._cracks),
@@ -143,6 +143,9 @@ class ReconstructionEngine:
                 total_frames=self._frame_count,
                 total_points=self._total_points,
             )
+            if self._status == "completed":
+                self._status = "accumulating"  # 消费掉，防止每帧都广播旧 mesh
+            return result
 
     @property
     def frame_count(self) -> int:
@@ -157,6 +160,7 @@ class ReconstructionEngine:
         with self._lock:
             if not self._point_blocks:
                 self._status = "accumulating"
+                self._rebuild_in_progress = False
                 return
             self._status = "running"
             blocks = list(self._point_blocks)

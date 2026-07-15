@@ -84,13 +84,19 @@
             />
             <ManualPanel v-else-if="subMode === 'manual'"
               :folderName="manualFolder" :dataStatus="manualDataStatus"
-              :locCount="manualLocCount" :detCount="manualDetCount" :fusionCount="manualFusionCount"
+              :replayMode="manualReplayMode" :hasFusion="manualHasFusion"
+              :canRawRebuild="manualCanRawRebuild"
+              :fusionCount="manualFusionCount" :sensorCount="manualSensorCount" :locCount="manualLocCount"
+              :straightLineOn="straightLineOn"
               :playing="manualPlaying" :current="manualCurrent" :total="manualTotal"
               @update:folderName="manualFolder = $event"
+              @update:replayMode="manualReplayMode = $event"
+              @update:straightLineOn="straightLineOn = $event"
               @load="manualLoad"
               @play="manualPlay"
               @pause="manualPause"
               @stop="manualStop"
+              @renderAll="manualRenderAll"
             />
           </div>
           <div v-else style="font-size:10px;color:#666">被动模式: 等待外部数据推送</div>
@@ -120,7 +126,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted, onUnmounted, watch } from 'vue'
+import { ref, reactive, computed, onMounted, onUnmounted, watch } from 'vue'
 import ReconstructionViewer from '../components/ReconstructionViewer.vue'
 import TopToolbar from '../components/TopToolbar.vue'
 import DebugSidebar from '../components/DebugSidebar.vue'
@@ -198,17 +204,23 @@ let replayTimer: any = null
 
 // ── 手动模式 ──
 const manualFolder = ref('')
-const manualDataStatus = ref<'none' | 'loading' | 'full' | 'fusion_only' | 'error'>('none')
-const manualLocCount = ref(0)
-const manualDetCount = ref(0)
-const manualFusionCount = ref(0)
+const manualDataStatus = ref<'none' | 'loading' | 'full' | 'error'>('none')
+const manualReplayMode = ref<'fusion' | 'raw'>('fusion')
+const manualHasFusion = ref(false)
+const manualHasSensor = ref(false)
+const manualHasLoc = ref(false)
 const manualPlaying = ref(false)
 const manualCurrent = ref(0)
 const manualTotal = ref(0)
-const manualLocFrames = ref<any[]>([])
-const manualDetFrames = ref<any[]>([])
 const manualFusionFrames = ref<any[]>([])
+const manualSensorFrames = ref<any[]>([])
+const manualLocFrames = ref<any[]>([])
 let manualTimer: any = null
+
+const manualCanRawRebuild = computed(() => manualHasSensor.value && (manualHasLoc.value || straightLineOn.value))
+const manualFusionCount = ref(0)
+const manualSensorCount = ref(0)
+const manualLocCount = ref(0)
 
 // ── 统计 ──
 const stats = reactive({ location: 0, detection: 0 })
@@ -273,9 +285,10 @@ function onChangeSubMode(sm: string) {
   replayLoaded.value = false; replayLocCount.value = 0; replayDetCount.value = 0
   replayCurrent.value = 0; replayTotal.value = 0
   // 清除手动加载数据
-  manualLocFrames.value = []; manualDetFrames.value = []
-  manualDataStatus.value = 'none'; manualLocCount.value = 0; manualDetCount.value = 0
-  manualFusionCount.value = 0; manualCurrent.value = 0; manualTotal.value = 0
+  manualFusionFrames.value = []; manualSensorFrames.value = []; manualLocFrames.value = []
+  manualFusionCount.value = 0; manualSensorCount.value = 0; manualLocCount.value = 0
+  manualDataStatus.value = 'none'; manualCurrent.value = 0; manualTotal.value = 0
+  manualHasFusion.value = false; manualHasSensor.value = false; manualHasLoc.value = false
   subMode.value = sm as 'relay' | 'replay' | 'manual'
   seenLoc.clear()
   seenDet.clear()
@@ -306,14 +319,14 @@ function toggleRunning() {
 function startActive() {
   if (subMode.value === 'relay') startRelay()
   else if (subMode.value === 'replay' && replayLoaded.value) replayPlay()
-  else if (subMode.value === 'manual' && (manualDataStatus.value === 'full' || manualDataStatus.value === 'fusion_only')) manualPlay()
+  else if (subMode.value === 'manual' && manualDataStatus.value === 'full') manualPlay()
   else log('请先加载数据', 'error')
 }
 
 // ── 保存辅助 ──
-async function doSave(type: 'location' | 'sensor' | 'fusion', data: any) {
+async function doSave(type: 'location' | 'sensor' | 'fusion' | 'fusion', data: any) {
   if (!saveOn.value || !saveName.value) return
-  const flag = type === 'location' ? saveLoc.value : type === 'sensor' ? saveDet.value : saveFusion.value
+  const flag = type === 'location' ? saveLoc.value : type === 'sensor' ? saveDet.value : type === 'fusion' ? saveFusion.value : saveFusion.value
   if (!flag) return
   try {
     await fetch(`${backend}/api/debug/save/${type}?session=${encodeURIComponent(saveName.value)}`, {
@@ -327,11 +340,16 @@ async function forwardLocation(data: any) {
   try {
     const ts = data.timestamp_ns
     if (seenLoc.has(ts)) return
-    seenLoc.add(ts); _capSet(seenLoc)
     const r = await postJson(`${backend}/api/realtime/feed/location`, data)
-    if (r.ok) stats.location++
-    await doSave('location', data)
-    log(`POST /kinematics ts=${ts}`, 'success')
+    if (r.ok) {
+      seenLoc.add(ts); _capSet(seenLoc)
+      stats.location++
+      await doSave('location', data)
+      log(`POST /kinematics ts=${ts}`, 'success')
+    } else {
+      const j = await r.json().catch(() => ({}))
+      log(`POST /kinematics ts=${ts}: ${j.status || 'failed'}`, 'error')
+    }
   } catch (e: any) {
     log(`Location forward error: ${e.message}`, 'error')
   }
@@ -353,8 +371,19 @@ async function forwardSensor(data: any) {
 
     const r = await postJson(`${backend}/api/realtime/feed/detection`, data)
     const j = await r.json()
-    if (j.status === 'ok') stats.detection++
-    await doSave('sensor', data)
+    if (j.status === 'ok') {
+      stats.detection++
+      await doSave('sensor', data)
+      // 存融合数据包 (点云+位姿+图片, 供手动模式回放)
+      if (j.final) {
+        // 精简格式: 去掉 camera_views 里的 camera_pose (配置常量)
+        j.final.camera_views = j.final.camera_views?.map((cv: any) => {
+          const { camera_pose, ...rest } = cv; return rest
+        })
+        j.final.car_position = j.final.car_position?.pose
+        await doSave('fusion', j.final)
+      }
+    }
     log(`POST /frame ${fid}`, j.status === 'ok' ? 'success' : 'error')
   } catch (e: any) {
     log(`Sensor forward error: ${e.message}`, 'error')
@@ -365,17 +394,26 @@ async function forwardSensor(data: any) {
 //  中继模式 (Relay)
 // ════════════════════════════════════════════════════════════
 
+let relayStreamWs: WebSocket | null = null
+
 function startRelay() {
   if (!running.value || mode.value !== 'active' || subMode.value !== 'relay') return
+  // 关旧 WS，阻止 HTTP 回退
+  if (relayStreamWs) {
+    relayStreamWs.onclose = null
+    relayStreamWs.close()
+    relayStreamWs = null
+  }
   lastRelayLocTs = 0
   lastRelayDetTs = 0
+  straightLineT0 = 0
   transpond = createTranspondClient(relayUrl.value.trim(), replayTimeout.value * 1000)
 
   // 优先 WS 实时推送
   try {
-    let streamWs: WebSocket | null = transpond.connectStream('all', (msg: any) => {
+    relayStreamWs = transpond.connectStream('all', (msg: any) => {
       if (!running.value || mode.value !== 'active' || subMode.value !== 'relay') {
-        streamWs?.close(); return
+        relayStreamWs?.close(); return
       }
       if (msg.type === 'location' && msg.frames) {
         if (straightLineOn.value) {
@@ -386,20 +424,26 @@ function startRelay() {
             car: { kinematics: { velocity: straightLineSpeed.value, steering_angle: 0, wheel_base: 1.5 } },
           })
         } else {
-          for (const f of msg.frames) forwardLocation(f)
+          for (const f of msg.frames) {
+            forwardLocation(f)
+            if (f.timestamp_ns > lastRelayLocTs) lastRelayLocTs = f.timestamp_ns
+          }
         }
       } else if (msg.type === 'sensor' && msg.frames) {
-        for (const f of msg.frames) forwardSensor(f)
+        for (const f of msg.frames) {
+          forwardSensor(f)
+          if (f.timestamp_ns > lastRelayDetTs) lastRelayDetTs = f.timestamp_ns
+        }
       }
     })
-    streamWs.onopen = () => {
+    relayStreamWs.onopen = () => {
       relayConnected.value = true
       // 首次连接时快速拉取状态
       transpond?.getStatus().then(({ data }) => {
         if (data) relayCache.value = { location: data.location_cached ?? 0, sensor: data.sensor_cached ?? 0 }
       })
     }
-    streamWs.onclose = () => {
+    relayStreamWs.onclose = () => {
       relayConnected.value = false
       // WS 断开 → fallback HTTP 轮询
       if (running.value && mode.value === 'active' && subMode.value === 'relay') {
@@ -407,7 +451,7 @@ function startRelay() {
         relayTimer = setInterval(relayPoll, relayInterval.value)
       }
     }
-    streamWs.onerror = () => {
+    relayStreamWs.onerror = () => {
       relayConnected.value = false
       // WS 失败 → fallback HTTP 轮询
       if (running.value && mode.value === 'active' && subMode.value === 'relay') {
@@ -602,45 +646,31 @@ function doReplayStep() {
 
 async function manualLoad() {
   const folder = manualFolder.value.trim()
-  if (!folder) {
-    manualDataStatus.value = 'error'
-    return
-  }
+  if (!folder) { manualDataStatus.value = 'error'; return }
 
   manualDataStatus.value = 'loading'
   try {
-    const [locR, detR, fusR] = await Promise.all([
-      fetch(`${backend}/api/debug/sessions/${encodeURIComponent(folder)}/location`).then(r => r.json()),
-      fetch(`${backend}/api/debug/sessions/${encodeURIComponent(folder)}/sensor`).then(r => r.json()),
-      fetch(`${backend}/api/debug/sessions/${encodeURIComponent(folder)}/fusion`).then(r => r.json()),
-    ])
+    // 用 info 端点查数量，不全量加载（大 session 会超时）
+    const info = await fetch(`${backend}/api/debug/sessions/${encodeURIComponent(folder)}/info`).then(r => r.json())
+    manualHasFusion.value = (info.fusion || 0) > 0
+    manualHasSensor.value = (info.sensor || 0) > 0
+    manualHasLoc.value = (info.location || 0) > 0
 
-    const locs: any[] = locR?.frames || []
-    const dets: any[] = detR?.frames || []
-    const fusions: any[] = fusR?.frames || []
+    // 记录总数
+    manualTotal.value = manualHasFusion.value ? info.fusion : (manualHasSensor.value ? info.sensor : 0)
+    manualFusionCount.value = info.fusion || 0
+    manualSensorCount.value = info.sensor || 0
+    manualLocCount.value = info.location || 0
+    // 清空缓存
+    manualFusionFrames.value = []
+    manualSensorFrames.value = []
+    manualLocFrames.value = []
 
-    manualLocCount.value = locs.length
-    manualDetCount.value = dets.length
-    manualFusionCount.value = fusions.length
+    if (manualHasFusion.value) { manualReplayMode.value = 'fusion' }
+    else if (manualCanRawRebuild.value) { manualReplayMode.value = 'raw' }
 
-    if (locs.length > 0 && dets.length > 0) {
-      // 情况A: loc + det 齐全
-      manualLocFrames.value = locs.sort((a: any, b: any) => a.timestamp_ns - b.timestamp_ns)
-      manualDetFrames.value = dets.sort((a: any, b: any) => a.timestamp_ns - b.timestamp_ns)
-      manualTotal.value = locs.length + dets.length
-      manualDataStatus.value = 'full'
-      log(`手动加载: Loc=${locs.length} Det=${dets.length} (后端融合)`, 'success')
-    } else if (fusions.length > 0) {
-      // 情况B: 仅有 fusion
-      manualFusionFrames.value = fusions
-      manualTotal.value = fusions.length
-      manualDataStatus.value = 'fusion_only'
-      log(`手动加载: Fusion=${fusions.length} (跳过融合直接渲染)`, 'success')
-    } else {
-      // 情况C: 数据缺失
-      manualDataStatus.value = 'error'
-      log('数据缺失: 需要 (Loc+Det) 或 Fusion 数据', 'error')
-    }
+    manualDataStatus.value = (manualHasFusion.value || manualHasSensor.value) ? 'full' : 'error'
+    log(`扫描: fusion=${manualFusionCount.value} sensor=${manualSensorCount.value} loc=${manualLocCount.value}`, 'success')
   } catch (e: any) {
     manualDataStatus.value = 'error'
     log(`加载失败: ${e.message}`, 'error')
@@ -648,17 +678,13 @@ async function manualLoad() {
 }
 
 function manualPlay() {
-  if (manualDataStatus.value === 'full') {
-    manualPlaying.value = true
-    manualCurrent.value = 0
-    seenLoc.clear()
-    seenDet.clear()
-    straightLineT0 = 0
-    doManualStepFull()
-  } else if (manualDataStatus.value === 'fusion_only') {
-    manualPlaying.value = true
-    manualCurrent.value = 0
-    doManualStepFusion()
+  if (manualReplayMode.value === 'fusion') {
+    if (manualFusionCount.value === 0) { log('无融合数据', 'error'); return }
+    manualPlaying.value = true; manualCurrent.value = 0; doManualStepFusion()
+  } else if (manualReplayMode.value === 'raw') {
+    if (!manualHasSensor.value) { log('无 sensor 数据', 'error'); return }
+    if (!manualHasLoc.value && !straightLineOn.value) { log('缺少定位数据, 请勾选匀速直线', 'error'); return }
+    manualPlaying.value = true; manualCurrent.value = 0; straightLineT0 = 0; doManualStepRaw()
   } else {
     log('请先加载手动数据', 'error')
   }
@@ -675,70 +701,69 @@ function manualStop() {
   manualCurrent.value = 0
 }
 
-function doManualStepFull() {
-  if (!manualPlaying.value) return
-
-  const locs = manualLocFrames.value
-  const dets = manualDetFrames.value
-  const allFrames: { type: 'loc' | 'det'; data: any; ts: number }[] = [
-    ...locs.map((f: any) => ({ type: 'loc' as const, data: f, ts: f.timestamp_ns })),
-    ...dets.map((f: any) => ({ type: 'det' as const, data: f, ts: f.timestamp_ns })),
-  ].sort((a, b) => a.ts - b.ts)
-
-  if (manualCurrent.value >= allFrames.length) {
-    manualPlaying.value = false
-    log('手动播放完成', 'success')
-    return
-  }
-
-  const frame = allFrames[manualCurrent.value]
-  if (frame.type === 'loc') {
-    if (straightLineOn.value) {
-      postJson(`${backend}/api/realtime/feed/location`, {
-        timestamp_ns: Date.now() * 1_000_000,
-        camera: [{ camera_pose: { position: { x: 0, y: 0, z: 1 }, rotation: { qw: 0.7071, qx: 0, qy: 0.7071, qz: 0 } } }],
-        car: { kinematics: { velocity: straightLineSpeed.value, steering_angle: 0, wheel_base: 1.5 } },
-      })
-    } else {
-      forwardLocation(frame.data)
+async function manualRenderAll() {
+  const isFusion = manualReplayMode.value === 'fusion'
+  const total = isFusion ? manualFusionCount.value : manualSensorCount.value
+  if (!total) { log('无可用数据', 'error'); return }
+  log(`开始一键渲染 ${total} 帧...`, 'info')
+  const BATCH = 50
+  for (let offset = 0; offset < total; offset += BATCH) {
+    const type = isFusion ? 'fusion' : 'sensor'
+    const res = await fetch(`${backend}/api/debug/sessions/${encodeURIComponent(manualFolder.value)}/${type}?offset=${offset}&limit=${BATCH}`)
+    const data = await res.json()
+    const frames: any[] = data?.frames || []
+    for (const f of frames) {
+      if (isFusion) { await postJson(`${backend}/api/realtime/feed/fusion`, f) }
+      else {
+        if (straightLineOn.value) {
+          await postJson(`${backend}/api/realtime/feed/location`, {
+            timestamp_ns: Date.now() * 1_000_000,
+            camera: [{ camera_pose: { position: {x:0,y:0,z:1}, rotation: {qw:0.7071,qx:0,qy:0.7071,qz:0} } }],
+            car: { kinematics: { velocity: straightLineSpeed.value, steering_angle: 0, wheel_base: 1.5 } },
+          })
+        }
+        await forwardSensor(f)
+      }
     }
-  } else if (frame.type === 'det') {
-    forwardSensor(frame.data)
   }
-
-  manualCurrent.value++
-
-  if (manualCurrent.value < allFrames.length) {
-    const nextTs = allFrames[manualCurrent.value].ts
-    const delay = Math.max(10, (nextTs - frame.ts) / 1e6)
-    manualTimer = setTimeout(doManualStepFull, delay)
-  } else {
-    manualTimer = setTimeout(doManualStepFull, 100)
-  }
+  log('一键渲染完成', 'success')
 }
 
-function doManualStepFusion() {
+async function doManualStepFusion() {
   if (!manualPlaying.value) return
-
-  const fusions = manualFusionFrames.value
-  if (manualCurrent.value >= fusions.length) {
-    manualPlaying.value = false
-    log('Fusion 渲染完成', 'success')
-    return
-  }
-
-  const f = fusions[manualCurrent.value]
-  if (f.mesh) viewerRef.value?.addMesh(f.mesh)
-  if (f.camera_trail) viewerRef.value?.updateTrail(f.camera_trail)
-  if (f.cracks) {
-    crackList.value = f.cracks
-    viewerRef.value?.addCracks(f.cracks)
-  }
-  meshStats.frames = f.total_frames || manualCurrent.value + 1
-  log(`渲染 Fusion #${manualCurrent.value + 1}`, 'success')
-
+  const total = manualFusionCount.value
+  if (manualCurrent.value >= total) { manualPlaying.value = false; log('手动播放完成', 'success'); return }
+  // 按需加载单帧
+  const res = await fetch(`${backend}/api/debug/sessions/${encodeURIComponent(manualFolder.value)}/fusion?offset=${manualCurrent.value}&limit=1`)
+  const frames = (await res.json())?.frames || []
+  const f = frames[0]
+  if (!f) { manualPlaying.value = false; return }
+  await postJson(`${backend}/api/realtime/feed/fusion`, f)
+  log(`POST /fusion #${manualCurrent.value + 1}`, 'success')
   manualCurrent.value++
-  manualTimer = setTimeout(doManualStepFusion, 500)
+  manualTimer = setTimeout(doManualStepFusion, 100)
+}
+
+async function doManualStepRaw() {
+  if (!manualPlaying.value) return
+  const total = manualSensorCount.value
+  if (manualCurrent.value >= total) { manualPlaying.value = false; log('手动播放完成', 'success'); return }
+  // 按需加载单帧
+  const res = await fetch(`${backend}/api/debug/sessions/${encodeURIComponent(manualFolder.value)}/sensor?offset=${manualCurrent.value}&limit=1`)
+  const frames = (await res.json())?.frames || []
+  const f = frames[0]
+  if (!f) { manualPlaying.value = false; return }
+  // 匀速直线: 先喂合成 kinematics, 再发 sensor
+  if (straightLineOn.value) {
+    await postJson(`${backend}/api/realtime/feed/location`, {
+      timestamp_ns: Date.now() * 1_000_000,
+      camera: [{ camera_pose: { position: { x: 0, y: 0, z: 1 }, rotation: { qw: 0.7071, qx: 0, qy: 0.7071, qz: 0 } } }],
+      car: { kinematics: { velocity: straightLineSpeed.value, steering_angle: 0, wheel_base: 1.5 } },
+    })
+  }
+  forwardSensor(f)
+  manualCurrent.value++
+  manualTimer = setTimeout(doManualStepRaw, 100)
 }
 
 // ════════════════════════════════════════════════════════════
@@ -774,7 +799,9 @@ async function clearAll() {
   seenLoc.clear(); seenDet.clear()
   straightLineT0 = 0
   replayLoaded.value = false; replayLocFrames.value = []; replayDetFrames.value = []
-  manualDataStatus.value = 'none'; manualLocFrames.value = []; manualDetFrames.value = []; manualFusionFrames.value = []
+  manualDataStatus.value = 'none'; manualFusionFrames.value = []; manualSensorFrames.value = []; manualLocFrames.value = []
+  manualFusionCount.value = 0; manualSensorCount.value = 0; manualLocCount.value = 0
+  manualHasFusion.value = false; manualHasSensor.value = false; manualHasLoc.value = false
   viewerRef.value?.resetScene()
   log('已清除', 'info')
 }

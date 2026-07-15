@@ -5,7 +5,9 @@
 # ============================================================
 
 import asyncio
+import json
 import logging
+from pathlib import Path
 
 from fastapi import APIRouter
 
@@ -113,12 +115,58 @@ async def feed_detection(payload: dict):
 
         if result and result.status == "completed":
             from reconstruction.routes import _broadcast
-            asyncio.create_task(_broadcast({"type": "rebuild_complete", "data": result.model_dump()}))
+            asyncio.create_task(_broadcast({"type": "rebuild_complete", "data": result.model_dump(), "layered": _routes.engine.mode == "layered"}))
 
-        return {"status": "ok", "fusion_count": fusion_count, "yolo_detections": yolo_hits}
+        return {"status": "ok", "fusion_count": fusion_count, "yolo_detections": yolo_hits, "final": final}
 
     except Exception as e:
         logger.error("feed_detection: %s", e, exc_info=True)
+        return {"status": "error", "message": str(e)}
+
+
+@router.post("/feed/fusion")
+async def feed_fusion(payload: dict):
+    """手动模式回放: 接收预融合数据包, 补全 camera_pose 后直接走管线。"""
+    try:
+        # 从 config.yaml 补全 camera_pose (LiDAR/相机位姿对齐)
+        try:
+            from config_loader import CONFIG
+            _cameras = CONFIG.get("sensors", {}).get("cameras", [])
+            _cp = _cameras[0].get("pose_in_body", {}) if _cameras else {}
+            _dft_pos = _cp.get("position", [0, 0, 1])
+            _dft_rot = _cp.get("rotation", [0.7071, 0, 0.7071, 0])
+        except Exception:
+            _dft_pos = [0, 0, 1]
+            _dft_rot = [0.7071, 0, 0.7071, 0]
+
+        for cv in payload.get("camera_views", []):
+            if "camera_pose" not in cv:
+                cv["camera_pose"] = {
+                    "position": {"x": _dft_pos[0], "y": _dft_pos[1], "z": _dft_pos[2]},
+                    "rotation": {"qw": _dft_rot[0], "qx": _dft_rot[1], "qy": _dft_rot[2], "qz": _dft_rot[3]},
+                }
+
+        ts = payload.get("timestamp_ns", 0)
+        sf = _build_sensor_frame(payload, ts)
+
+        import reconstruction.routes as _routes
+        loop = asyncio.get_running_loop()
+
+        def _proc():
+            fused = _routes.fusion.process(sf)
+            if fused is None: return None
+            _routes.engine.add_frame(fused)
+            return _routes.engine.get_result()
+
+        result = await loop.run_in_executor(None, _proc)
+
+        if result and result.status == "completed":
+            from reconstruction.routes import _broadcast
+            asyncio.create_task(_broadcast({"type": "rebuild_complete", "data": result.model_dump(), "layered": _routes.engine.mode == "layered"}))
+
+        return {"status": "ok"}
+    except Exception as e:
+        logger.error("feed_fused: %s", e, exc_info=True)
         return {"status": "error", "message": str(e)}
 
 

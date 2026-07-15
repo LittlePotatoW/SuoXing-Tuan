@@ -1,40 +1,29 @@
 # ============================================================
 # backend/debug/routes.py
-# 调试用数据存取 — data_captures/ 文件夹的读写接口
+# 调试工具 API — 保存/回放 session 数据
 # ============================================================
 
 import json
 import os
 from pathlib import Path
 
-from fastapi import APIRouter, Request, HTTPException
+from fastapi import APIRouter, Request
 
-router = APIRouter(prefix="/api/debug")
+router = APIRouter(prefix="/api/debug", tags=["debug"])
 
-# data_captures/ 在项目根目录
-ROOT = Path(__file__).resolve().parent.parent.parent
-DATA_DIR = ROOT / "data_captures"
+DATA_DIR = Path(__file__).resolve().parent.parent.parent / "data_captures"
 
 
 def _session_dir(name: str) -> Path:
-    """安全校验 session name，避免路径穿越"""
-    p = (DATA_DIR / name).resolve()
-    if not str(p).startswith(str(DATA_DIR.resolve())):
-        raise HTTPException(400, "Invalid session name")
-    return p
+    return DATA_DIR / name
 
 
-def _next_index(dir_path: Path) -> int:
-    """返回下一个可用序号 (1-based)"""
-    if not dir_path.exists():
-        return 1
-    files = [f for f in os.listdir(str(dir_path)) if f.endswith(".json")]
-    if not files:
-        return 1
+def _next_index(d: Path) -> int:
+    existing = [f.stem for f in d.glob("*.json")]
     nums = []
-    for f in files:
+    for n in existing:
         try:
-            nums.append(int(Path(f).stem))
+            nums.append(int(n))
         except ValueError:
             pass
     return max(nums) + 1 if nums else 1
@@ -98,45 +87,54 @@ async def session_info(name: str):
 
 
 @router.get("/sessions/{name}/location")
-async def get_locations(name: str):
+async def get_locations(name: str, offset: int = 0, limit: int = 0):
     d = _session_dir(name) / "location"
     if not d.exists():
-        return {"frames": []}
+        return {"frames": [], "total": 0}
     files = sorted([f for f in os.listdir(str(d)) if f.endswith(".json")])
+    total = len(files)
+    if limit > 0:
+        files = files[offset:offset + limit]
     frames = []
     for fname in files:
         try:
             frames.append(json.loads((d / fname).read_text(encoding="utf-8")))
         except Exception:
             pass
-    return {"frames": frames}
+    return {"frames": frames, "total": total}
 
 
 @router.get("/sessions/{name}/sensor")
-async def get_sensors(name: str):
+async def get_sensors(name: str, offset: int = 0, limit: int = 0):
     d = _session_dir(name) / "sensor"
     if not d.exists():
-        return {"frames": []}
+        return {"frames": [], "total": 0}
     files = sorted([f for f in os.listdir(str(d)) if f.endswith(".json")])
+    total = len(files)
+    if limit > 0:
+        files = files[offset:offset + limit]
     frames = []
     for fname in files:
         try:
             frames.append(json.loads((d / fname).read_text(encoding="utf-8")))
         except Exception:
             pass
-    return {"frames": frames}
+    return {"frames": frames, "total": total}
 
 
 @router.get("/sessions/{name}/fusion")
-async def get_fusions(name: str):
+async def get_fusions(name: str, offset: int = 0, limit: int = 0):
     d = _session_dir(name) / "fusion"
     if not d.exists():
-        return {"frames": []}
+        return {"frames": [], "total": 0}
     files = sorted([f for f in os.listdir(str(d)) if f.endswith(".json")])
+    total = len(files)
+    if limit > 0:
+        files = files[offset:offset + limit]
     frames = []
     for fname in files:
         try:
             frames.append(json.loads((d / fname).read_text(encoding="utf-8")))
         except Exception:
             pass
-    return {"frames": frames}
+    return {"frames": frames, "total": total}

@@ -19,20 +19,34 @@ from loader.scene_loader import SceneLoader
 logger = logging.getLogger("reconstruction.routes")
 
 # ── 可调参数 ──
-LIDAR_POSE_IN_BODY = [0.0, 0.0, 0.5, 1.0, 0.0, 0.0, 0.0]
-
-# ── 相机内参配置（每个相机一个条目，与 CameraView 顺序对应）──
-# 实际部署时替换为标定值；设空列表则禁用颜色渲染
-CAMERA_INTRINSICS_CONFIG = [
-    {
-        "K": [[640.0, 0.0, 320.0],
-              [0.0, 640.0, 240.0],
-              [0.0, 0.0, 1.0]],
-        "dist_coeff": [0.0, 0.0, 0.0, 0.0, 0.0],  # 无镜头畸变
-        "image_width": 640,
-        "image_height": 480,
-    },
-]
+# 优先从 config.yaml 读取，不存在时用默认值
+try:
+    from config_loader import CONFIG
+    _sensors = CONFIG.get("sensors", {})
+    LIDAR_POSE_IN_BODY = _sensors.get("lidar_pose_in_body", [0.0, 0.0, 0.5, 1.0, 0.0, 0.0, 0.0])
+    _cameras = _sensors.get("cameras", [])
+    CAMERA_INTRINSICS_CONFIG = [
+        {
+            "K": c["K"],
+            "dist_coeff": c.get("dist_coeff", [0,0,0,0,0]),
+            "image_width": c["width"],
+            "image_height": c["height"],
+        }
+        for c in _cameras
+    ] if _cameras else [{
+        "K": [[640.0, 0.0, 320.0], [0.0, 640.0, 240.0], [0.0, 0.0, 1.0]],
+        "dist_coeff": [0.0, 0.0, 0.0, 0.0, 0.0],
+        "image_width": 640, "image_height": 480,
+    }]
+except Exception:
+    LIDAR_POSE_IN_BODY = [0.0, 0.0, 0.5, 1.0, 0.0, 0.0, 0.0]
+    CAMERA_INTRINSICS_CONFIG = [
+        {
+            "K": [[640.0, 0.0, 320.0], [0.0, 640.0, 240.0], [0.0, 0.0, 1.0]],
+            "dist_coeff": [0.0, 0.0, 0.0, 0.0, 0.0],
+            "image_width": 640, "image_height": 480,
+        },
+    ]
 
 
 def _build_intrinsics(config: list[dict]) -> list[CameraIntrinsics]:
