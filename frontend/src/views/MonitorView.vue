@@ -247,6 +247,14 @@ function processFrames(frames: any[]) {
       const raw = Uint8Array.from(atob(pts), c => c.charCodeAt(0))
       pts = Array.from(new Float32Array(raw.buffer))
     }
+    // 轴翻转
+    const cfg = getConfig()
+    if (cfg.pointcloud?.flip_x || cfg.pointcloud?.flip_y) {
+      for (let i = 0; i < pts.length; i += 3) {
+        if (cfg.pointcloud.flip_x) pts[i] = -(pts[i] as number)
+        if (cfg.pointcloud.flip_y) pts[i + 1] = -(pts[i + 1] as number)
+      }
+    }
     if (pts.length >= 3) pcViewerRef.value?.updatePointCloud(pts)
   }
 }

@@ -139,7 +139,7 @@ import ReplayPanel from '../components/ReplayPanel.vue'
 import ManualPanel from '../components/ManualPanel.vue'
 import ActionLogBar, { type LogEntry } from '../components/ActionLogBar.vue'
 import { getBaseUrl } from '../services/apiClient'
-import { getTranspondUrl } from '../services/config'
+import { getConfig, getTranspondUrl } from '../services/config'
 import { createTranspondClient, type TranspondClient } from '../services/transpondClient'
 
 const viewerRef = ref<any>(null)
@@ -182,6 +182,26 @@ function _capSet(s: Set<unknown>) {
   if (s.size <= DEDUP_MAX) return
   const it = s.values()
   for (let i = 0; i < 1000; i++) s.delete(it.next().value)
+}
+
+// 点云轴翻转 — forwardSensor 入口调用，保存原始数据，加载时重新翻转
+function _flipPointCloud(data: any) {
+  const cfg = getConfig()
+  const flipX = cfg.pointcloud?.flip_x
+  const flipY = cfg.pointcloud?.flip_y
+  if (!flipX && !flipY) return
+  const pc = data.point_cloud
+  if (!pc) return
+  let pts = pc.points
+  if (pc.encoding === 'float32_base64' && typeof pts === 'string') {
+    const raw = Uint8Array.from(atob(pts), c => c.charCodeAt(0))
+    const f = new Float32Array(raw.buffer)
+    for (let i = 0; i < f.length; i += 3) {
+      if (flipX) f[i] = -f[i]
+      if (flipY) f[i + 1] = -f[i + 1]
+    }
+    pc.points = btoa(String.fromCharCode(...new Uint8Array(f.buffer)))
+  }
 }
 let transpond: TranspondClient | null = null
 
@@ -357,6 +377,9 @@ async function forwardLocation(data: any) {
 
 async function forwardSensor(data: any) {
   try {
+    // 保存原始数据（翻转前），回放/手动加载时重新翻转
+    await doSave('sensor', JSON.parse(JSON.stringify(data)))
+
     const fid = data.frame_id || String(data.timestamp_ns)
     if (seenDet.has(fid)) return
     seenDet.add(fid); _capSet(seenDet)
@@ -369,11 +392,12 @@ async function forwardSensor(data: any) {
       data = { ...data, car_position: { pose: { position: { x, y: 0, z: 0 }, rotation: { qw: 1, qx: 0, qy: 0, qz: 0 } }, timestamp_ns: data.timestamp_ns } }
     }
 
+    // 翻转后发给后端
+    _flipPointCloud(data)
     const r = await postJson(`${backend}/api/realtime/feed/detection`, data)
     const j = await r.json()
     if (j.status === 'ok') {
       stats.detection++
-      await doSave('sensor', data)
       // 存融合数据包 (点云+位姿+图片, 供手动模式回放)
       if (j.final) {
         // 精简格式: 去掉 camera_views 里的 camera_pose (配置常量)
@@ -579,22 +603,35 @@ async function replayRenderAll() {
     ...dets.map((f: any) => ({ type: 'det' as const, data: f, ts: f.timestamp_ns })),
   ].sort((a, b) => a.ts - b.ts)
 
-  const BATCH = 10
-  for (let i = 0; i < allFrames.length; i += BATCH) {
+  const total = allFrames.length
+  if (!total) { log('无回放数据', 'error'); return }
+  log(`开始一键渲染 ${total} 帧...`, 'info')
+  straightLineT0 = 0
+  const BATCH = 5
+  for (let i = 0; i < total; i += BATCH) {
     const batch = allFrames.slice(i, i + BATCH)
-    await Promise.all(batch.map(f => f.type === 'loc'
-      ? (straightLineOn.value
-        ? postJson(`${backend}/api/realtime/feed/location`, {
+    await Promise.all(batch.map(f => {
+      if (f.type === 'loc') {
+        if (straightLineOn.value) {
+          return postJson(`${backend}/api/realtime/feed/location`, {
             timestamp_ns: Date.now() * 1_000_000,
-            camera: [{ camera_pose: { position: {x:0,y:0,z:1}, rotation: {qw:0.7071,qx:0,qy:0.7071,qz:0} } }],
+            camera: [{ camera_pose: { position: { x: 0, y: 0, z: 1 }, rotation: { qw: 0.7071, qx: 0, qy: 0.7071, qz: 0 } } }],
             car: { kinematics: { velocity: straightLineSpeed.value, steering_angle: 0, wheel_base: 1.5 } },
           })
-        : forwardLocation(f.data))
-      : f.type === 'det' ? forwardSensor(f.data) : Promise.resolve()))
-    replayCurrent.value = Math.min(i + BATCH, allFrames.length)
+        }
+        const body = {
+          timestamp_ns: f.data.timestamp_ns,
+          camera: f.data.camera || [{ camera_pose: { position: { x: 0, y: 0, z: 1 }, rotation: { qw: 0.7071, qx: 0, qy: 0.7071, qz: 0 } } }],
+          car: f.data.car || { kinematics: { velocity: straightLineSpeed.value, steering_angle: 0, wheel_base: 1.5 } },
+        }
+        return postJson(`${backend}/api/realtime/feed/location`, body)
+      }
+      return postJson(`${backend}/api/realtime/feed/detection`, f.data)
+    }))
+    replayCurrent.value = Math.min(i + BATCH, total)
   }
-  replayCurrent.value = allFrames.length
-  log(`一键渲染完成: ${allFrames.length} 帧`, 'success')
+  replayCurrent.value = total
+  log(`一键渲染完成: ${total} 帧`, 'success')
 }
 
 function doReplayStep() {
@@ -706,26 +743,30 @@ async function manualRenderAll() {
   const total = isFusion ? manualFusionCount.value : manualSensorCount.value
   if (!total) { log('无可用数据', 'error'); return }
   log(`开始一键渲染 ${total} 帧...`, 'info')
-  const BATCH = 50
+  straightLineT0 = 0
+  const type = isFusion ? 'fusion' : 'sensor'
+  const BATCH = 20
   for (let offset = 0; offset < total; offset += BATCH) {
-    const type = isFusion ? 'fusion' : 'sensor'
     const res = await fetch(`${backend}/api/debug/sessions/${encodeURIComponent(manualFolder.value)}/${type}?offset=${offset}&limit=${BATCH}`)
     const data = await res.json()
     const frames: any[] = data?.frames || []
     for (const f of frames) {
-      if (isFusion) { await postJson(`${backend}/api/realtime/feed/fusion`, f) }
-      else {
+      if (isFusion) {
+        await postJson(`${backend}/api/realtime/feed/fusion`, f)
+      } else {
         if (straightLineOn.value) {
           await postJson(`${backend}/api/realtime/feed/location`, {
             timestamp_ns: Date.now() * 1_000_000,
-            camera: [{ camera_pose: { position: {x:0,y:0,z:1}, rotation: {qw:0.7071,qx:0,qy:0.7071,qz:0} } }],
+            camera: [{ camera_pose: { position: { x: 0, y: 0, z: 1 }, rotation: { qw: 0.7071, qx: 0, qy: 0.7071, qz: 0 } } }],
             car: { kinematics: { velocity: straightLineSpeed.value, steering_angle: 0, wheel_base: 1.5 } },
           })
         }
-        await forwardSensor(f)
+        await postJson(`${backend}/api/realtime/feed/detection`, f)
       }
+      manualCurrent.value++
     }
   }
+  manualCurrent.value = total
   log('一键渲染完成', 'success')
 }
 
@@ -733,7 +774,6 @@ async function doManualStepFusion() {
   if (!manualPlaying.value) return
   const total = manualFusionCount.value
   if (manualCurrent.value >= total) { manualPlaying.value = false; log('手动播放完成', 'success'); return }
-  // 按需加载单帧
   const res = await fetch(`${backend}/api/debug/sessions/${encodeURIComponent(manualFolder.value)}/fusion?offset=${manualCurrent.value}&limit=1`)
   const frames = (await res.json())?.frames || []
   const f = frames[0]

@@ -10,6 +10,7 @@ interface FrontendConfig {
   transpond: { host: string; port: number }
   control?: { host: string; port: number }
   timeout?: { backend_ms: number; transpond_ms: number }
+  pointcloud?: { flip_x: boolean; flip_y: boolean }
 }
 
 let _config: FrontendConfig | null = null
@@ -40,6 +41,10 @@ export async function loadConfig(): Promise<FrontendConfig> {
         backend_ms: parsed?.timeout?.backend_ms || 30000,
         transpond_ms: parsed?.timeout?.transpond_ms || 30000,
       },
+      pointcloud: {
+        flip_x: parsed?.pointcloud?.flip_x ?? false,
+        flip_y: parsed?.pointcloud?.flip_y ?? false,
+      },
     }
   } catch (e) {
     console.warn('[Config] load failed, using defaults:', e)
@@ -48,6 +53,7 @@ export async function loadConfig(): Promise<FrontendConfig> {
       transpond: { host: 'localhost', port: 8001 },
       control: { host: '127.0.0.1', port: 8080 },
       timeout: { backend_ms: 30000, transpond_ms: 30000 },
+      pointcloud: { flip_x: false, flip_y: false },
     }
   }
   return _config
