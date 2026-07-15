@@ -131,8 +131,17 @@ function addMesh(data: { vertices: number[]; faces: number[]; vertex_count: numb
   })
   meshGroup.clear()
 
+  // Z-up (backend) → Y-up (Three.js): (x, y, z) → (x, z, -y)
+  const verts = new Float32Array(data.vertices.length)
+  for (let i = 0; i < data.vertex_count; i++) {
+    const j = i * 3
+    verts[j] = data.vertices[j]         // X → X
+    verts[j + 1] = data.vertices[j + 2] // Z → Y (up)
+    verts[j + 2] = -data.vertices[j + 1] // Y → Z (left→horizontal)
+  }
+
   const geo = new THREE.BufferGeometry()
-  geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(data.vertices), 3))
+  geo.setAttribute('position', new THREE.BufferAttribute(verts, 3))
 
   if (data.faces.length > 0) {
     geo.setIndex(data.faces)
@@ -159,7 +168,8 @@ function addMesh(data: { vertices: number[]; faces: number[]; vertex_count: numb
 function updateTrail(trail: number[][] | null) {
   trailGroup.clear()
   if (!trail || trail.length < 2) return
-  const points = trail.map(p => new THREE.Vector3(p[0], p[1], p[2]))
+  // Z-up → Y-up: (x, y, z) → (x, z, -y)
+  const points = trail.map(p => new THREE.Vector3(p[0], p[2], -p[1]))
   const geo = new THREE.BufferGeometry().setFromPoints(points)
   const mat = new THREE.LineBasicMaterial({ color: 0x4fc3f7 })
   trailGroup.add(new THREE.Line(geo, mat))
@@ -175,7 +185,8 @@ function addCracks(cracks: { position: { x: number; y: number; z: number }; conf
       : c.crack_type === '渗漏' || c.crack_type === 'leakage' ? 0x42a5f5 : 0xffa726
     const mat = new THREE.MeshBasicMaterial({ color })
     const sphere = new THREE.Mesh(geo, mat)
-    sphere.position.set(c.position.x, c.position.y, c.position.z)
+    // Z-up → Y-up: (x, y, z) → (x, z, -y)
+    sphere.position.set(c.position.x, c.position.z, -c.position.y)
     crackGroup.add(sphere)
   }
 }

@@ -460,7 +460,7 @@ class DefectProjector:
 
         T_BW = self._pose_to_matrix(car_pose_in_world)
         T_CB = self._pose_to_matrix(camera_pose_in_body)
-        T_WC = self._inverse_pose(T_BW) @ T_CB
+        T_WC = self._inverse_pose(T_CB) @ self._inverse_pose(T_BW)
 
         ones = np.ones((len(pts), 1), dtype=np.float64)
         cam_pts = (T_WC @ np.hstack([pts, ones]).T).T
