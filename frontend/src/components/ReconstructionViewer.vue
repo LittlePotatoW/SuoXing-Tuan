@@ -24,6 +24,11 @@ let crackGroup: THREE.Group
 let animId = 0
 let disposed = false
 
+// ── 键盘走动 ──
+const keysDown = new Set<string>()
+const MOVE_SPEED = 0.8  // 米/秒
+let lastTime = 0
+
 onMounted(() => {
   const el = containerRef.value!
   const w = el.clientWidth
@@ -63,6 +68,9 @@ onMounted(() => {
   d2.position.set(-2, -1, -2); scene.add(d2)
 
   window.addEventListener('resize', onResize)
+  window.addEventListener('keydown', onKeyDown)
+  window.addEventListener('keyup', onKeyUp)
+  lastTime = performance.now()
   animId = requestAnimationFrame(loop)
 })
 
@@ -70,6 +78,8 @@ onUnmounted(() => {
   disposed = true
   cancelAnimationFrame(animId)
   window.removeEventListener('resize', onResize)
+  window.removeEventListener('keydown', onKeyDown)
+  window.removeEventListener('keyup', onKeyUp)
   renderer?.dispose()
   controls?.dispose()
 })
@@ -83,8 +93,63 @@ function onResize() {
   renderer.setSize(w, h)
 }
 
+function onKeyDown(e: KeyboardEvent) {
+  // 忽略输入框中的按键
+  const tag = (e.target as HTMLElement)?.tagName
+  if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return
+  keysDown.add(e.key.toLowerCase())
+}
+
+function onKeyUp(e: KeyboardEvent) {
+  keysDown.delete(e.key.toLowerCase())
+}
+
+const _forward = new THREE.Vector3()
+const _right = new THREE.Vector3()
+const _up = new THREE.Vector3(0, 1, 0)
+
+function updateWalk(dt: number) {
+  if (keysDown.size === 0) return
+  const dist = MOVE_SPEED * dt
+
+  camera.getWorldDirection(_forward)
+  _forward.y = 0
+  if (_forward.lengthSq() < 1e-9) _forward.set(0, 0, -1)
+  _forward.normalize()
+  _right.crossVectors(_forward, _up).normalize()
+
+  if (keysDown.has('w')) {
+    camera.position.addScaledVector(_forward, dist)
+    controls.target.addScaledVector(_forward, dist)
+  }
+  if (keysDown.has('s')) {
+    camera.position.addScaledVector(_forward, -dist)
+    controls.target.addScaledVector(_forward, -dist)
+  }
+  if (keysDown.has('a')) {
+    camera.position.addScaledVector(_right, -dist)
+    controls.target.addScaledVector(_right, -dist)
+  }
+  if (keysDown.has('d')) {
+    camera.position.addScaledVector(_right, dist)
+    controls.target.addScaledVector(_right, dist)
+  }
+  if (keysDown.has('q')) {
+    camera.position.y -= dist
+    controls.target.y -= dist
+  }
+  if (keysDown.has('e')) {
+    camera.position.y += dist
+    controls.target.y += dist
+  }
+}
+
 function loop() {
   if (disposed) return
+  const now = performance.now()
+  const dt = Math.min((now - lastTime) / 1000, 0.1)  // 上限 100ms 防跳帧
+  lastTime = now
+  updateWalk(dt)
   controls.update()
   renderer.render(scene, camera)
   animId = requestAnimationFrame(loop)

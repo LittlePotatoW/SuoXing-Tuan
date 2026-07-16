@@ -11,7 +11,7 @@ from fastapi import APIRouter, Request
 
 router = APIRouter(prefix="/api/debug", tags=["debug"])
 
-DATA_DIR = Path(__file__).resolve().parent.parent.parent.parent / "data_captures"
+DATA_DIR = Path(__file__).resolve().parent.parent.parent / "data_captures"
 
 
 def _session_dir(name: str) -> Path:
