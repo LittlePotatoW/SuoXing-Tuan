@@ -20,6 +20,9 @@ MAX_POINTS = 2_000_000
 # 相机轨迹最大保留点数，防内存泄漏
 MAX_TRAIL_POINTS = 10_000
 
+# 裂缝吸附阈值 (米)。缺陷点距离 Mesh 表面超过此值时，自动吸附到最近顶点
+CRACK_SNAP_THRESHOLD = 0.1  # 10cm
+
 # Poisson 重建深度 (6~10)。越高越精细但计算量指数增长。
 POISSON_DEPTH = 8
 
@@ -202,6 +205,11 @@ class ReconstructionEngine:
                     )
                     self._latest_mesh = md
 
+                    # 裂缝吸附: 离 Mesh 太远的点自动贴到最近表面
+                    snapped = self._snap_cracks(verts)
+                    if snapped > 0:
+                        logger.info("Crack snap: %d corrected", snapped)
+
                     # 逐层模式：清空累积，下次只用新帧
                     if self.mode == "layered":
                         self._point_blocks = []
@@ -224,6 +232,37 @@ class ReconstructionEngine:
         logger.info("Rebuild done: %d verts, %d faces, %.0fms",
                      self._latest_mesh.vertex_count if self._latest_mesh else 0,
                      self._latest_mesh.face_count if self._latest_mesh else 0, elapsed)
+
+    def _snap_cracks(self, mesh_vertices: np.ndarray) -> int:
+        """
+        把离 Mesh 表面太远的裂缝标注吸附到最近的顶点上。
+        """
+        if len(mesh_vertices) == 0 or not self._cracks:
+            logger.debug("Snap skipped: verts=%d cracks=%d", len(mesh_vertices), len(self._cracks))
+            return 0
+
+        from scipy.spatial import KDTree
+        tree = KDTree(mesh_vertices)
+        corrected = 0
+
+        for i, crack in enumerate(self._cracks):
+            p = np.array([[crack.position.x, crack.position.y, crack.position.z]])
+            dist, idx = tree.query(p, k=1)
+            d = float(dist[0])
+            if d > CRACK_SNAP_THRESHOLD:
+                nearest = mesh_vertices[idx[0]]
+                logger.info("Snap crack[%d] type=%s dist=%.3fm (%.1f,%.1f,%.1f)->(%.1f,%.1f,%.1f)",
+                            i, crack.crack_type, d,
+                            crack.position.x, crack.position.y, crack.position.z,
+                            float(nearest[0]), float(nearest[1]), float(nearest[2]))
+                crack.position.x = float(nearest[0])
+                crack.position.y = float(nearest[1])
+                crack.position.z = float(nearest[2])
+                corrected += 1
+            else:
+                logger.debug("Snap crack[%d] skipped: dist=%.3fm <= threshold", i, d)
+
+        return corrected
 
     def _reconstruct_surface(self, points: np.ndarray, colors: np.ndarray | None = None):
         """核心: 点云 → 三角网格。可选附带顶点颜色。"""

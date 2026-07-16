@@ -108,10 +108,18 @@ async def feed_detection(payload: dict):
         async with _state_lock:
             fusion_count += 1
 
-        # YOLO
+        # YOLO（主线程，原位置）
         yolo_hits = 0
         if yolo_enabled and _inference_engine and _inference_engine.loaded:
             yolo_hits = _run_yolo(final, _routes.engine, _routes.CAMERA_INTRINSICS_CONFIG)
+
+        # 补吸附: YOLO 新增裂纹后，立刻吸附到最新 Mesh
+        if yolo_hits > 0 and _routes.engine._latest_mesh:
+            import numpy as np
+            verts = np.array(_routes.engine._latest_mesh.vertices, dtype=np.float64).reshape(-1, 3)
+            snapped = _routes.engine._snap_cracks(verts)
+            if snapped > 0:
+                logger.info("Crack snap after YOLO: %d corrected", snapped)
 
         if result and result.status == "completed":
             from reconstruction.routes import _broadcast
@@ -159,6 +167,17 @@ async def feed_fusion(payload: dict):
             return _routes.engine.get_result()
 
         result = await loop.run_in_executor(None, _proc)
+
+        # YOLO + 补吸附
+        yolo_hits = 0
+        if yolo_enabled and _inference_engine and _inference_engine.loaded:
+            yolo_hits = _run_yolo(payload, _routes.engine, _routes.CAMERA_INTRINSICS_CONFIG)
+        if yolo_hits > 0 and _routes.engine._latest_mesh:
+            import numpy as np
+            verts = np.array(_routes.engine._latest_mesh.vertices, dtype=np.float64).reshape(-1, 3)
+            snapped = _routes.engine._snap_cracks(verts)
+            if snapped > 0:
+                logger.info("Crack snap after YOLO (fusion): %d corrected", snapped)
 
         if result and result.status == "completed":
             from reconstruction.routes import _broadcast
@@ -233,16 +252,28 @@ def _run_yolo(final: dict, eng, camera_intrinsics_config: list = None) -> int:
     hits = 0
     car_pose = final["car_position"]["pose"]
     car_world = {"position": car_pose["position"], "rotation": car_pose["rotation"]}
-    for idx, cv in enumerate(final.get("camera_views", [])):
-        if not cv.get("image_data"): continue
+    cam_views = final.get("camera_views", [])
+    logger.info("YOLO: %d cam_views, has_image=%s",
+                len(cam_views),
+                [bool(cv.get("image_data")) for cv in cam_views])
+    for idx, cv in enumerate(cam_views):
+        if not cv.get("image_data"):
+            logger.info("YOLO: cam[%d] no image_data", idx)
+            continue
         img = _decode_rgb(cv["image_data"])
-        if img is None: continue
+        if img is None:
+            logger.info("YOLO: cam[%d] decode failed", idx)
+            continue
         try:
             res = _inference_engine.infer(img)
         except Exception as exc:
             logger.warning("YOLO inference failed for camera %d: %s", idx, exc)
             continue
-        if not res or not res.detections: continue
+        if not res or not res.detections:
+            logger.info("YOLO: cam[%d] %d detections", idx, len(res.detections) if res else 0)
+            continue
+
+        logger.info("YOLO: cam[%d] %d detections!", idx, len(res.detections))
 
         cam_pose_body = {
             "position": cv.get("camera_pose", {}).get("position", {"x": 0, "y": 0, "z": 0}),
