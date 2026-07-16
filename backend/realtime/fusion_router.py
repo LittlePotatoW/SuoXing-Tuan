@@ -193,16 +193,26 @@ def _build_sensor_frame(final: dict, ts: int):
     from common.schemas import (
         SensorFrame, PointCloudData, CarPosition, Pose6DoF, Vector3, Quaternion, CameraView,
     )
-    cp = final["car_position"]
-    pc = final["point_cloud"]
+    cp = final.get("car_position", {})
+    # 兼容两种格式: 带 pose 包装 / 不带
+    if "pose" in cp:
+        cp_pos = cp["pose"]["position"]
+        cp_rot = cp["pose"]["rotation"]
+    else:
+        cp_pos = cp.get("position", {"x": 0, "y": 0, "z": 0})
+        cp_rot = cp.get("rotation", {"qw": 1, "qx": 0, "qy": 0, "qz": 0})
+    pc = final.get("point_cloud", {})
     return SensorFrame(
         frame_id=final.get("frame_id", f"det_{ts}"),
         timestamp_ns=ts,
-        point_cloud=PointCloudData(points=pc["points"], point_count=pc["point_count"]),
+        point_cloud=PointCloudData(
+            points=pc.get("points", []),
+            point_count=pc.get("point_count", 0),
+        ),
         car_position=CarPosition(
             pose=Pose6DoF(
-                position=Vector3(x=cp["pose"]["position"]["x"], y=cp["pose"]["position"]["y"], z=cp["pose"]["position"]["z"]),
-                rotation=Quaternion(qw=cp["pose"]["rotation"]["qw"], qx=cp["pose"]["rotation"]["qx"], qy=cp["pose"]["rotation"]["qy"], qz=cp["pose"]["rotation"]["qz"]),
+                position=Vector3(x=cp_pos["x"], y=cp_pos["y"], z=cp_pos["z"]),
+                rotation=Quaternion(qw=cp_rot.get("qw",1), qx=cp_rot.get("qx",0), qy=cp_rot.get("qy",0), qz=cp_rot.get("qz",0)),
             ), timestamp_ns=ts,
         ),
         camera_views=[
@@ -210,8 +220,17 @@ def _build_sensor_frame(final: dict, ts: int):
                 image_data=cv.get("image_data"),
                 width=cv.get("width", 640), height=cv.get("height", 480),
                 camera_pose=Pose6DoF(
-                    position=Vector3(x=cv["camera_pose"]["position"]["x"], y=cv["camera_pose"]["position"]["y"], z=cv["camera_pose"]["position"]["z"]),
-                    rotation=Quaternion(qw=cv["camera_pose"]["rotation"]["qw"], qx=cv["camera_pose"]["rotation"]["qx"], qy=cv["camera_pose"]["rotation"]["qy"], qz=cv["camera_pose"]["rotation"]["qz"]),
+                    position=Vector3(
+                        x=cv.get("camera_pose", {}).get("position", {}).get("x", 0),
+                        y=cv.get("camera_pose", {}).get("position", {}).get("y", 0),
+                        z=cv.get("camera_pose", {}).get("position", {}).get("z", 0),
+                    ),
+                    rotation=Quaternion(
+                        qw=cv.get("camera_pose", {}).get("rotation", {}).get("qw", 1),
+                        qx=cv.get("camera_pose", {}).get("rotation", {}).get("qx", 0),
+                        qy=cv.get("camera_pose", {}).get("rotation", {}).get("qy", 0),
+                        qz=cv.get("camera_pose", {}).get("rotation", {}).get("qz", 0),
+                    ),
                 ),
             ) for cv in final.get("camera_views", [])
         ],
@@ -250,7 +269,11 @@ def _run_yolo(final: dict, eng, camera_intrinsics_config: list = None) -> int:
             }
     proj = DefectProjector(camera_intrinsics=_proj_intrinsics if _proj_intrinsics else None)
     hits = 0
-    car_pose = final["car_position"]["pose"]
+    cp_raw = final.get("car_position", {})
+    if "pose" in cp_raw:
+        car_pose = cp_raw["pose"]
+    else:
+        car_pose = cp_raw
     car_world = {"position": car_pose["position"], "rotation": car_pose["rotation"]}
     cam_views = final.get("camera_views", [])
     logger.info("YOLO: %d cam_views, has_image=%s",
