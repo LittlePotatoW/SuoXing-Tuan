@@ -1,4 +1,9 @@
 # ============================================================
 # backend/server/detection/__init__.py
-# 检测服务包：YOLO 模型加载、推理与后处理
+# YOLO 检测服务包
 # ============================================================
+
+from server.detection.detector import Detector
+from server.detection.postprocess import apply_nms, map_to_3d
+
+__all__ = ['Detector', 'apply_nms', 'map_to_3d']

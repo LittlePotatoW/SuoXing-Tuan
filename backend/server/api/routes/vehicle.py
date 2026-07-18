@@ -10,7 +10,11 @@
 
 from fastapi import APIRouter
 
-from server.api.schemas.vehicle import TelemetryRequest, PositionResponse
+import uuid
+
+from server.api.schemas.vehicle import (
+    TelemetryRequest, PositionResponse, FrameRequest,
+)
 from server.estimation import PositionEstimator, Position
 
 router = APIRouter(prefix="/api/vehicle", tags=["vehicle"])
@@ -39,3 +43,13 @@ def get_position() -> PositionResponse:
         y=pos.y,
         heading=pos.heading,
     )
+
+
+@router.post("/frame", status_code=200)
+def post_frame(body: FrameRequest):
+    """接收一帧深度相机数据 (RGB + 深度图), 推入重建引擎"""
+    frame_id = uuid.uuid4().hex[:12]
+    from server.engine import ReconstructionEngine
+    engine = ReconstructionEngine.create()
+    engine.push_frame(frame_id, body.timestamp, body.image, body.depth_map)
+    return {"status": "ok", "frame_id": frame_id}

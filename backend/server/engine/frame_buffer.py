@@ -1,10 +1,54 @@
 # ============================================================
 # backend/server/engine/frame_buffer.py
-# 帧缓冲区（环形缓冲区）：缓存已对齐的点云+图像帧
+# 帧缓冲区：缓存帧数据，达到阈值后供重建引擎消费
 #
 # 设计与用法:
 #   导出 FrameBuffer 类
-#   导出 push() / flush() / is_ready() 方法
+#   导出 push() / flush() / __len__() / is_ready() 方法
 # ============================================================
-#   BUFFER_CAPACITY  缓冲区最大帧数
+#   BUFFER_CAPACITY  缓冲区最大帧数（默认 100）
 # ============================================================
+
+import threading
+from collections import namedtuple
+
+FrameEntry = namedtuple('FrameEntry', [
+    'frame_id', 'timestamp', 'image', 'depth_map',
+])
+
+
+class FrameBuffer:
+    """线程安全的帧缓冲区"""
+
+    def __init__(self, threshold: int = 30, capacity: int = 100):
+        self._threshold = threshold
+        self._capacity = capacity
+        self._frames: list[FrameEntry] = []
+        self._lock = threading.Lock()
+
+    def push(self, entry: FrameEntry) -> None:
+        """推入一帧。超出容量时丢弃最旧帧"""
+        with self._lock:
+            self._frames.append(entry)
+            if len(self._frames) > self._capacity:
+                self._frames.pop(0)
+
+    def flush(self) -> list[FrameEntry]:
+        """取出所有帧并清空缓冲区"""
+        with self._lock:
+            frames = list(self._frames)
+            self._frames.clear()
+            return frames
+
+    def is_ready(self) -> bool:
+        """帧数是否达到重建阈值"""
+        with self._lock:
+            return len(self._frames) >= self._threshold
+
+    def __len__(self) -> int:
+        with self._lock:
+            return len(self._frames)
+
+    @property
+    def threshold(self) -> int:
+        return self._threshold

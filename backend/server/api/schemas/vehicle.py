@@ -20,3 +20,9 @@ class PositionResponse(BaseModel):
     x: float
     y: float
     heading: float
+
+
+class FrameRequest(BaseModel):
+    timestamp: float
+    image: str = Field(description="Base64 编码的 JPEG RGB 图像")
+    depth_map: str = Field(description="Base64 编码的 16-bit PNG 深度图, 像素值=深度mm")
