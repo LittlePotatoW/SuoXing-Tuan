@@ -35,4 +35,10 @@ Thumbs.db
 
 *.zip
 
+# 重建输出
+backend/output/
+
 tests/
+
+# js环境
+node_modules/

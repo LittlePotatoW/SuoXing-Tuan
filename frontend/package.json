@@ -1,4 +1,32 @@
-// ============================================================
-// frontend/package.json
-// 前端项目配置：依赖、脚本、元信息
-// ============================================================
+{
+  "name": "suoxing-tuan-frontend",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vue-tsc --noEmit && vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@dimforge/rapier3d-compat": "^0.14.0",
+    "@tweenjs/tween.js": "^25.0.0",
+    "axios": "^1.18.1",
+    "js-yaml": "^5.2.1",
+    "pinia": "^2.3.1",
+    "three": "^0.185.1",
+    "vue": "^3.5.39",
+    "vue-router": "^4.6.4"
+  },
+  "devDependencies": {
+    "@types/js-yaml": "^4.0.9",
+    "@types/node": "^26.1.1",
+    "@types/stats.js": "^0.17.3",
+    "@types/three": "^0.185.0",
+    "@types/webxr": "^0.5.0",
+    "@vitejs/plugin-vue": "^5.2.4",
+    "typescript": "~5.4.5",
+    "vite": "^5.4.21",
+    "vue-tsc": "^2.2.0"
+  }
+}
