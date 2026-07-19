@@ -6,14 +6,18 @@
 #   导出 create_app() 工厂函数
 #   直接运行本文件启动开发服务器: python -m server.main
 #
-# 完整 API 接口:
-#   POST   /api/vehicle/telemetry       接收遥测 (speed + steering)
-#   POST   /api/vehicle/frame           接收帧数据 (RGB + 深度图)
-#   GET    /api/vehicle/position        查询小车当前位置
-#   GET    /api/reconstruction/status   重建进度查询
-#   GET    /api/reconstruction/result   重建结果获取 (支持 ?since=)
-#   GET    /api/detection/result        检测结果查询
-#   POST   /api/detection/image         接收单张图像（用于静态检测）
+# 完整 API 接口 (11个):
+#   POST   /api/vehicle/telemetry          接收遥测 (speed + steering)
+#   POST   /api/vehicle/frame              接收帧数据 (RGB + 深度图)
+#   GET    /api/vehicle/position           查询小车当前位置
+#   POST   /api/vehicle/estimator/reset    重置位置估计器 + 切模式
+#   GET    /api/vehicle/estimator/config   查询估计器配置和位置
+#   GET    /api/reconstruction/status      重建进度查询
+#   GET    /api/reconstruction/result      重建结果获取 (支持 ?since=)
+#   POST   /api/reconstruction/reset       重置重建引擎 + 改参数
+#   GET    /api/reconstruction/config      查询引擎配置和状态
+#   GET    /api/detection/result           检测结果查询
+#   POST   /api/detection/image            接收单张图像（用于静态检测）
 # ============================================================
 
 import uvicorn

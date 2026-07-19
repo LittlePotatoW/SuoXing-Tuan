@@ -4,7 +4,8 @@
 #
 # 设计与用法:
 #   导出 Detector 类（单例）
-#   导出 detect() 方法（输入 base64 图像, 输出检测框列表）
+#   导出 detect() / latest() / latest_annotated() 方法
+#   detect() 推理后自动调用 YOLOv8 plot() 生成标注图
 # ============================================================
 #   MODEL_PATH       默认模型路径 (config.detection.model_path)
 #   CONF_THRESHOLD   默认置信度阈值 (config.detection.conf_threshold)
@@ -36,6 +37,7 @@ class Detector:
         self._model = None
         self._model_available = False
         self._latest_detections: list[dict] = []
+        self._annotated_image: str = ""
         self._rwlock = threading.Lock()
 
         self._try_load()
@@ -116,14 +118,34 @@ class Detector:
                     'bbox_2d': [float(x1), float(y1), float(x2), float(y2)],
                 })
 
+        # YOLOv8 内置画图：色框 + 置信度 + 类名标签
+        try:
+            annotated = results[0].plot()
+            import cv2
+            _, buf = cv2.imencode('.jpg', annotated,
+                                  [cv2.IMWRITE_JPEG_QUALITY, 85])
+            annotated_b64 = base64.b64encode(buf).decode()
+        except Exception:
+            annotated_b64 = ""
+
         with self._rwlock:
             self._latest_detections = detections
+            self._annotated_image = annotated_b64
 
         return detections
 
     def latest(self) -> list[dict]:
         with self._rwlock:
             return list(self._latest_detections)
+
+    def latest_annotated(self) -> dict:
+        """返回检测结果 + 标注图 base64"""
+        with self._rwlock:
+            return {
+                'detections': list(self._latest_detections),
+                'annotated_image': self._annotated_image,
+                'count': len(self._latest_detections),
+            }
 
 
 def _decode_image(b64: str) -> np.ndarray | None:

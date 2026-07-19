@@ -3,7 +3,9 @@
 # 检测服务的 Pydantic 请求/响应模型
 #
 # 设计与用法:
-#   导出 ImageDetectRequest / DetectionResultResponse
+#   导出 ImageDetectRequest / DetectionItem
+#   导出 DetectionResultResponse (元数据)
+#   导出 DetectionAnnotatedResponse (元数据 + 标注图)
 # ============================================================
 
 from pydantic import BaseModel, Field
@@ -24,3 +26,9 @@ class DetectionItem(BaseModel):
 class DetectionResultResponse(BaseModel):
     detections: list[DetectionItem]
     count: int
+
+
+class DetectionAnnotatedResponse(BaseModel):
+    detections: list[DetectionItem]
+    count: int
+    annotated_image: str = ""   # base64 JPEG, YOLOv8 风格标注图

@@ -4,7 +4,8 @@
 #
 # 设计与用法:
 #   导出 ReconstructionEngine 类
-#   导出 create() / stop() / push_frame() / get_status() / get_result()
+#   导出 create(mode, frame_threshold, voxel_size, config) / stop()
+#   导出 push_frame() / get_status() / get_result() / get_config()
 # ============================================================
 #   FRAME_THRESHOLD  默认重建帧数阈值 (config.reconstruction.frame_threshold)
 #   RECON_MODE       重建模式 (config.reconstruction.mode)
@@ -39,11 +40,18 @@ class _ReconstructionResult:
 class ReconstructionEngine:
     """重建引擎（单例），帧累积 → 触发重建"""
 
-    def __init__(self, config: dict):
+    def __init__(self, config: dict,
+                 mode: str | None = None,
+                 frame_threshold: int | None = None,
+                 voxel_size: float | None = None):
         recon_cfg = config.get('reconstruction', {})
-        self._mode: str = recon_cfg.get('mode', 'incremental')
-        self._frame_threshold: int = recon_cfg.get('frame_threshold', 30)
-        self._voxel_size: float = recon_cfg.get('voxel_size', 0.01)
+        self._mode: str = mode or recon_cfg.get('mode', 'incremental')
+        self._frame_threshold: int = (frame_threshold
+                                      if frame_threshold is not None
+                                      else recon_cfg.get('frame_threshold', 30))
+        self._voxel_size: float = (voxel_size
+                                   if voxel_size is not None
+                                   else recon_cfg.get('voxel_size', 0.01))
 
         self._buffer = FrameBuffer(threshold=self._frame_threshold)
         self._latest_result: _ReconstructionResult | None = None
@@ -56,14 +64,19 @@ class ReconstructionEngine:
     # ============================================================
 
     @classmethod
-    def create(cls, config: dict | None = None) -> 'ReconstructionEngine':
+    def create(cls, mode: str | None = None,
+               frame_threshold: int | None = None,
+               voxel_size: float | None = None,
+               config: dict | None = None) -> 'ReconstructionEngine':
         global _instance
         with _lock:
             if _instance is None:
                 if config is None:
                     from server.config import get_config
                     config = get_config()
-                _instance = cls(config)
+                _instance = cls(config, mode=mode,
+                               frame_threshold=frame_threshold,
+                               voxel_size=voxel_size)
                 _instance._running = True
             return _instance
 
@@ -101,6 +114,15 @@ class ReconstructionEngine:
     # ============================================================
     # 查询接口
     # ============================================================
+
+    def get_config(self) -> dict:
+        return {
+            'mode': self._mode,
+            'frame_threshold': self._frame_threshold,
+            'voxel_size': self._voxel_size,
+            'frame_count': len(self._buffer),
+            'status': self._current_status(),
+        }
 
     def get_status(self) -> dict:
         return {

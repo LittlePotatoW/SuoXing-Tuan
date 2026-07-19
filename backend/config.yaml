@@ -67,13 +67,17 @@ reconstruction:
 
 # -------------------------------------------
 # 位置估计器
+# mode: "bicycle" 自行车模型 / "constant" 匀速直线 / "rgbd" 视觉里程计 / "fusion" EKF融合
 # -------------------------------------------
 estimation:
+  mode: "bicycle"               # 位置估计模式
   initial_x: 0.0               # 初始 x 坐标 (m)
   initial_y: 0.0               # 初始 y 坐标 (m)
   initial_heading: 0.0         # 初始航向角 (度), 0 = 正前方
-  wheelbase: 2.0               # 车辆轴距 (m), 影响转弯半径
-  max_history: 10000            # 最大轨迹存储点数, 超出后丢弃旧数据
+  wheelbase: 2.0               # 车辆轴距 (m), 模式1/4 用
+  constant_speed: 1.0          # 模式2 默认速度 (m/s)
+  fusion_weight: 0.5           # 模式4 融合权重 (0=纯视觉, 1=纯轮式)
+  max_history: 10000            # 最大轨迹存储点数
 
 # -------------------------------------------
 # YOLO 检测参数

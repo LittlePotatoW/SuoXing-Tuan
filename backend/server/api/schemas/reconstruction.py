@@ -4,11 +4,12 @@
 #
 # 设计与用法:
 #   导出 ReconstructionStatusResponse / ReconstructionResultResponse
+#   导出 ReconResetRequest / ReconConfigResponse
 # ============================================================
 
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from server.api.schemas.detection import DetectionItem
 
@@ -24,3 +25,17 @@ class ReconstructionResultResponse(BaseModel):
     timestamp: float
     point_cloud_url: str
     detections: list[DetectionItem]
+
+
+class ReconResetRequest(BaseModel):
+    mode: str | None = Field(None, description="full|incremental")
+    frame_threshold: int | None = None
+    voxel_size: float | None = None
+
+
+class ReconConfigResponse(BaseModel):
+    mode: str
+    frame_threshold: int
+    voxel_size: float
+    frame_count: int
+    status: str

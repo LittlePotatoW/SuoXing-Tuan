@@ -3,7 +3,8 @@
 # 小车数据上报的 Pydantic 请求/响应模型
 #
 # 设计与用法:
-#   导出 TelemetryRequest / PositionResponse
+#   导出 TelemetryRequest / PositionResponse / FrameRequest
+#   导出 EstimatorResetRequest / EstimatorConfigResponse
 # ============================================================
 
 from pydantic import BaseModel, Field
@@ -26,3 +27,24 @@ class FrameRequest(BaseModel):
     timestamp: float
     image: str = Field(description="Base64 编码的 JPEG RGB 图像")
     depth_map: str = Field(description="Base64 编码的 16-bit PNG 深度图, 像素值=深度mm")
+
+
+class EstimatorResetRequest(BaseModel):
+    mode: str | None = Field(None, description="bicycle|constant|rgbd|fusion")
+    wheelbase: float | None = None
+    constant_speed: float | None = None
+    initial_x: float | None = None
+    initial_y: float | None = None
+    initial_heading: float | None = None
+
+
+class EstimatorConfigResponse(BaseModel):
+    mode: str
+    wheelbase: float
+    constant_speed: float
+    initial_x: float
+    initial_y: float
+    initial_heading: float
+    x: float
+    y: float
+    heading: float

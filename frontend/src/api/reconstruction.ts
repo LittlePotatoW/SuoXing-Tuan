@@ -1,6 +1,10 @@
 // ============================================================
 // frontend/src/api/reconstruction.ts
-// 重建引擎 API：状态查询、结果获取
+// 重建引擎 API (Layer 2)：状态查询、结果获取
+//
+// 设计与用法:
+//   导出 getReconstructionStatus()        GET  /api/reconstruction/status       → ReconstructionStatusResponse
+//   导出 getReconstructionResult(since?)   GET  /api/reconstruction/result?since= → ReconstructionResultResponse
 // ============================================================
 
 import { httpClient } from '@/network/http-client'

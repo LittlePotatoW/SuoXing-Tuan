@@ -57,3 +57,9 @@ export interface DetectionResultResponse {
   detections: DetectionItem[]
   count: number
 }
+
+export interface DetectionAnnotatedResponse {
+  detections: DetectionItem[]
+  count: number
+  annotated_image: string   // base64 JPEG
+}

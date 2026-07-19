@@ -1,6 +1,11 @@
 // ============================================================
 // frontend/src/api/vehicle.ts
-// 小车数据 API：遥测上报、帧数据上报、位置查询
+// 小车数据 API (Layer 2)：遥测上报、帧数据上报、位置查询
+//
+// 设计与用法:
+//   导出 postTelemetry(data)    POST   /api/vehicle/telemetry   → { status }
+//   导出 postFrame(data)        POST   /api/vehicle/frame       → { status, frame_id }
+//   导出 getPosition()          GET    /api/vehicle/position    → PositionResponse
 // ============================================================
 
 import { httpClient } from '@/network/http-client'

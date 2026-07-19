@@ -4,14 +4,17 @@
 #
 # 设计与用法:
 #   导出 router (APIRouter)
-#   GET /status  重建进度查询
-#   GET /result  重建结果获取 (支持 ?since=)
+#   GET  /status   重建进度查询
+#   GET  /result   重建结果获取 (支持 ?since=)
+#   POST /reset    重置重建引擎 + 改参数
+#   GET  /config   查询引擎配置
 # ============================================================
 
 from fastapi import APIRouter, Query
 
 from server.api.schemas.reconstruction import (
     ReconstructionStatusResponse, ReconstructionResultResponse,
+    ReconResetRequest, ReconConfigResponse,
 )
 
 router = APIRouter(prefix="/api/reconstruction", tags=["reconstruction"])
@@ -47,3 +50,30 @@ def get_result(since: float | None = Query(None,
         point_cloud_url=r["point_cloud_url"],
         detections=r["detections"],
     )
+
+
+# ============================================================
+# 重建引擎管理
+# ============================================================
+
+@router.post("/reset", status_code=200)
+def reset_reconstruction(body: ReconResetRequest):
+    """重置重建引擎，可选改参数"""
+    from server.engine import ReconstructionEngine
+    ReconstructionEngine.stop()
+    ReconstructionEngine.create(
+        mode=body.mode,
+        frame_threshold=body.frame_threshold,
+        voxel_size=body.voxel_size,
+    )
+    engine = ReconstructionEngine.create()
+    return {"status": "ok", "mode": engine._mode}
+
+
+@router.get("/config", response_model=ReconConfigResponse)
+def get_recon_config() -> ReconConfigResponse:
+    """查询重建引擎当前配置和状态"""
+    from server.engine import ReconstructionEngine
+    engine = ReconstructionEngine.create()
+    cfg = engine.get_config()
+    return ReconConfigResponse(**cfg)
