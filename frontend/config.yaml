@@ -44,7 +44,7 @@ backend:
 reconstruction:
   mode: "incremental"           # "full" / "incremental"
   frame_threshold: 30           # 累积帧数触发重建
-  voxel_size: 0.01              # 体素降采样大小 (m)
+  voxel_size: 0.05              # 体素降采样大小 (m)
 
 # -------------------------------------------
 # 位置估计（前端默认值，与 backend/config.yaml 同步）

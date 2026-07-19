@@ -5,5 +5,6 @@
 
 from server.reconstruction.mapper import map_frames
 from server.reconstruction.fusion import fuse
+from server.reconstruction.surface import reconstruct_surface
 
-__all__ = ['map_frames', 'fuse']
+__all__ = ['map_frames', 'fuse', 'reconstruct_surface']

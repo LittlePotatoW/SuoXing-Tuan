@@ -236,8 +236,18 @@ class ReconstructionEngine:
                 except Exception:
                     logger.exception("YOLO 检测管线异常")
 
-            # 导出点云文件
-            pc_url = _save_pointcloud(result_pc, config)
+            # 表面重建（可选，由 config 控制；失败自动回退到点云）
+            surface_cfg = config.get('reconstruction', {}).get('surface', {})
+            mesh_url = None
+            if surface_cfg.get('enabled', False):
+                try:
+                    from server.reconstruction import reconstruct_surface
+                    mesh_url = reconstruct_surface(result_pc, config)
+                except Exception:
+                    logger.exception("表面重建失败，回退到点云模式")
+
+            # 导出文件（mesh PLY 或 点云 PLY）
+            pc_url = mesh_url or _save_pointcloud(result_pc, config)
 
             logger.info("重建完成: %d 帧, %d 点 → %s",
                          len(frames), len(result_pc), pc_url or "(内存)")

@@ -63,7 +63,13 @@ camera_to_vehicle:
 reconstruction:
   mode: "incremental"           # "full" 全量重建 / "incremental" 增量重建
   frame_threshold: 30           # 累积多少帧触发一次重建
-  voxel_size: 0.01              # 点云降采样体素大小 (m), 深度相机点云密集，体素宜小
+  voxel_size: 0.05              # 点云降采样体素大小 (m)
+  surface:
+    enabled: true              # 开启 Poisson 表面重建 (需 open3d)
+    poisson_depth: 8            # 6~10, 越高越精细, 计算量指数增长
+    outlier_nb: 20              # 离群点剔除: 邻居数
+    outlier_std: 2.0            # 离群点剔除: 标准差倍数
+    density_filter: 0.10        # 去掉密度最低的 N% 三角面
 
 # -------------------------------------------
 # 位置估计器

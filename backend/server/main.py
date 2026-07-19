@@ -21,8 +21,11 @@
 # ============================================================
 
 import uvicorn
+from pathlib import Path
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from server.api.routes import (
     vehicle_router,
@@ -48,6 +51,10 @@ def create_app() -> FastAPI:
     app.include_router(detection_router)
     app.include_router(session_router)
     app.include_router(report_router)
+
+    output_dir = Path(__file__).resolve().parent.parent / "output"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    app.mount("/output", StaticFiles(directory=str(output_dir)), name="output")
 
     return app
 

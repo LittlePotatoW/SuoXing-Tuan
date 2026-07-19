@@ -102,21 +102,9 @@ async function startReplay() {
       mode: reconDefaults.mode, frame_threshold: reconDefaults.frame_threshold, voxel_size: reconDefaults.voxel_size,
     })
     await resetEstimator({ mode: 'bicycle' })
-  } catch { /* backend unreachable */ }
+  } catch (e) { console.warn('reset reconstruction failed:', e) }
 
-  for (const t of session.telemetryList) {
-    try { await postTelemetry(t) } catch { /* ignore */ }
-  }
-
-  for (const fi of session.frames) {
-    try {
-      const frame = await session.readFrame(fi.id)
-      await postFrame(frame)
-    } catch { /* ignore */ }
-    sentFrames.value++
-  }
-
-  // 发完帧后轮询重建结果
+  // 发送前就开始轮询
   stopPolling()
   let lastTs = 0
   pollTimer = setInterval(async () => {
@@ -134,6 +122,18 @@ async function startReplay() {
       }
     } catch { /* no result yet */ }
   }, 2000)
+
+  for (const t of session.telemetryList) {
+    try { await postTelemetry(t) } catch { /* ignore */ }
+  }
+
+  for (const fi of session.frames) {
+    try {
+      const frame = await session.readFrame(fi.id)
+      await postFrame(frame)
+    } catch { /* ignore */ }
+    sentFrames.value++
+  }
 }
 
 onUnmounted(() => { stopPolling() })

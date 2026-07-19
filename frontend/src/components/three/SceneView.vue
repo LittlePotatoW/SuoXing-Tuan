@@ -14,7 +14,7 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted } from 'vue'
 import { SceneManager } from '@/services/renderer/three-scene'
-import { fetchAndParsePly, createPointCloud } from '@/services/renderer/point-cloud'
+import { fetchAndParsePly, addToScene } from '@/services/renderer/point-cloud'
 import { addCracks } from '@/services/renderer/annotations'
 import type { DetectionItem } from '@/types/api'
 
@@ -56,15 +56,18 @@ onUnmounted(() => {
 async function updatePointCloud(url: string): Promise<void> {
   if (!sceneMgr) return
   try {
-    const points = await fetchAndParsePly(url)
-    createPointCloud(points, sceneMgr)
-    pointCount.value = points.length / 3
-  } catch { /* fetch failed */ }
+    const ply = await fetchAndParsePly(url)
+    addToScene(ply, sceneMgr)
+    pointCount.value = ply.vertices.length / 3
+  } catch { /* fetch/parse failed */ }
 }
 
 function updateCracks(cracks: DetectionItem[]): void {
   if (!sceneMgr) return
-  addCracks(cracks, sceneMgr)
+  try {
+    addCracks(cracks, sceneMgr)
+  } catch (e) { console.warn('addCracks failed:', e) }
+
   crackCount.value = cracks.length
 }
 
