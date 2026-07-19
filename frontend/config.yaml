@@ -17,7 +17,7 @@ telemetry:
     host: "192.168.1.100"       # 局域网小车 IP
     port: 8001                   # 遥测 WS 端口
   server:
-    host: "telemetry.example.com" # 中转服务器地址
+    host: "192.168.1.100" # 中转服务器地址
     port: 8001
 
 # -------------------------------------------
@@ -25,29 +25,39 @@ telemetry:
 # -------------------------------------------
 frame:
   lan:
-    host: "192.168.1.101"       # 局域网相机 IP (可能和小车同一台)
+    host: "192.168.1.100"       # 局域网相机 IP (默认和小车同一台)
     port: 8002                   # 帧数据 WS 端口
   server:
-    host: "frame.example.com"   # 中转服务器地址 (可能和遥测不同)
+    host: "192.168.1.100"   # 中转服务器地址 (可能和遥测不同)
     port: 8002
 
 # -------------------------------------------
 # 后端 API 地址 (HTTP)
 # -------------------------------------------
 backend:
-  lan:
-    host: "127.0.0.1"           # 本地后端
-    port: 8000
-  server:
-    host: "api.example.com"     # 远程后端
-    port: 8000
+  host: "127.0.0.1"             # 后端地址（永远只有一个）
+  port: 8000
 
 # -------------------------------------------
-# 位置估计模式
+# 重建参数（前端默认值，与 backend/config.yaml 同步）
+# -------------------------------------------
+reconstruction:
+  mode: "incremental"           # "full" / "incremental"
+  frame_threshold: 30           # 累积帧数触发重建
+  voxel_size: 0.01              # 体素降采样大小 (m)
+
+# -------------------------------------------
+# 位置估计（前端默认值，与 backend/config.yaml 同步）
 # "bicycle" 自行车模型 / "constant" 匀速直线 / "rgbd" 视觉里程计 / "fusion" EKF融合
 # -------------------------------------------
 estimation:
   mode: "bicycle"
+  wheelbase: 2.0                # 轴距 (m)
+  constant_speed: 1.0           # 匀速模式默认速度 (m/s)
+  fusion_weight: 0.5            # EKF 融合权重
+  initial_x: 0.0                # 初始 x (m)
+  initial_y: 0.0                # 初始 y (m)
+  initial_heading: 0.0          # 初始航向角 (度)
 
 # -------------------------------------------
 # 数据轮询间隔 (ms)

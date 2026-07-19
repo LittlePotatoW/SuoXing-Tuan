@@ -1,6 +1,6 @@
 # ============================================================
 # script/start_backend.py
-# 启动后端开发服务器，host 和 port 从 config.yaml 读取
+# 启动后端开发服务器（后台运行），host/port 从 config.yaml 读取
 #
 # 用法:
 #   python script/start_backend.py
@@ -11,6 +11,7 @@
 import os
 import sys
 import argparse
+import subprocess
 from pathlib import Path
 
 import yaml
@@ -37,19 +38,17 @@ def main():
     args = parser.parse_args()
 
     os.chdir(str(backend_dir))
-    sys.path.insert(0, str(backend_dir))
 
-    import uvicorn
+    cmd = [sys.executable, "-m", "uvicorn", "server.main:app",
+           "--host", args.host, "--port", str(args.port)]
+    if args.reload:
+        cmd.append("--reload")
 
     print(f"启动后端: http://{args.host}:{args.port}")
     print(f"API 文档: http://{args.host}:{args.port}/docs")
 
-    uvicorn.run(
-        "server.main:app",
-        host=args.host,
-        port=args.port,
-        reload=args.reload,
-    )
+    # 后台启动 uvicorn，不阻塞当前终端
+    subprocess.Popen(cmd, creationflags=subprocess.CREATE_NEW_CONSOLE)
 
 
 if __name__ == "__main__":

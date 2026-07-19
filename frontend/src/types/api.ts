@@ -38,7 +38,7 @@ export interface DetectionItem {
   class_name: string
   confidence: number
   bbox_2d: number[]   // [x1, y1, x2, y2]
-  center_3d: number[]  // [x, y, z]
+  center_3d?: number[]  // [x, y, z], 仅重建流程有值
 }
 
 export interface ReconstructionResultResponse {
@@ -62,4 +62,57 @@ export interface DetectionAnnotatedResponse {
   detections: DetectionItem[]
   count: number
   annotated_image: string   // base64 JPEG
+}
+
+// ---- Estimator 管理 ----
+
+export interface EstimatorResetRequest {
+  mode?: string | null
+  wheelbase?: number | null
+  constant_speed?: number | null
+  initial_x?: number | null
+  initial_y?: number | null
+  initial_heading?: number | null
+}
+
+export interface EstimatorConfigResponse {
+  mode: string
+  wheelbase: number
+  constant_speed: number
+  initial_x: number
+  initial_y: number
+  initial_heading: number
+  x: number
+  y: number
+  heading: number
+}
+
+// ---- Reconstruction 管理 ----
+
+export interface ReconResetRequest {
+  mode?: string | null
+  frame_threshold?: number | null
+  voxel_size?: number | null
+  yolo_enabled?: boolean | null
+}
+
+export interface ReconConfigResponse {
+  mode: string
+  frame_threshold: number
+  voxel_size: number
+  frame_count: number
+  status: string
+}
+
+// ---- Session ----
+
+export interface SessionListItem {
+  name: string
+  frame_count: number
+}
+
+// ---- Report ----
+
+export interface ReportListItem {
+  filename: string
 }

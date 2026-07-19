@@ -38,7 +38,12 @@ Thumbs.db
 # 重建输出
 backend/output/
 
+# Session / Report 数据
+Session_Data/
+Report_Data/
+
 tests/
 
 # js环境
 node_modules/
+

@@ -1,22 +1,36 @@
 <!-- ============================================================ -->
 <!-- frontend/src/components/common/FileDropZone.vue               -->
-<!-- 拖拽上传区：纯 UI，暂不接文件处理逻辑                       -->
+<!-- 拖拽上传区：支持 emit file-selected 传出文件对象              -->
 <!-- ============================================================ -->
 <template>
   <div class="dropzone" :class="{ dragging }"
     @dragover.prevent="dragging = true"
     @dragleave="dragging = false"
-    @drop.prevent="dragging = false">
-    <div class="icon">📁</div>
+    @drop.prevent="onDrop">
     <p>{{ placeholder }}</p>
-    <input type="file" accept="image/*" class="file-input" @change="dragging = false" />
+    <input type="file" accept="image/*" class="file-input" @change="onChange" />
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref } from 'vue'
+
 defineProps<{ placeholder?: string }>()
+const emit = defineEmits<{ 'file-selected': [file: File] }>()
+
 const dragging = ref(false)
+
+function onDrop(e: DragEvent) {
+  dragging.value = false
+  const file = e.dataTransfer?.files?.[0]
+  if (file) emit('file-selected', file)
+}
+
+function onChange(e: Event) {
+  const input = e.target as HTMLInputElement
+  const file = input.files?.[0]
+  if (file) emit('file-selected', file)
+}
 </script>
 
 <style scoped>

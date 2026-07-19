@@ -16,6 +16,18 @@ import { useSettingsStore } from '@/stores/settings'
 import { useConnectionStore } from '@/stores/connection'
 import { useVehicleStore } from '@/stores/vehicle'
 import { postTelemetry, postFrame } from '@/api/vehicle'
+import type { Telemetry, Frame } from '@/types/data'
+
+let onTelemetry: ((t: Telemetry) => void) | null = null
+let onFrame: ((f: Frame) => void) | null = null
+
+export function setRecordingHooks(
+  telemetryHook: ((t: Telemetry) => void) | null,
+  frameHook: ((f: Frame) => void) | null,
+) {
+  onTelemetry = telemetryHook
+  onFrame = frameHook
+}
 
 export function useConnection() {
   const settings = useSettingsStore()
@@ -38,6 +50,7 @@ export function useConnection() {
       try {
         const data = parseTelemetry(raw)
         vehicle.updateTelemetry(data.speed, data.steering_angle)
+        onTelemetry?.(data)
         // 转发给后端 API
         postTelemetry(data).catch(() => {})
       } catch { /* ignore malformed */ }
@@ -49,6 +62,7 @@ export function useConnection() {
     frameWS.onMessage((raw) => {
       try {
         const data = parseFrame(raw)
+        onFrame?.(data)
         postFrame(data).catch(() => {})
       } catch { /* ignore malformed */ }
     })

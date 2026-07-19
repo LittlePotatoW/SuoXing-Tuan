@@ -20,7 +20,7 @@ class DetectionItem(BaseModel):
     class_name: str
     confidence: float
     bbox_2d: list[float]  # [x1, y1, x2, y2]
-    center_3d: list[float]  # [x, y, z] 世界坐标(静态检测时为相机坐标)
+    center_3d: list[float] | None = None  # [x, y, z], 仅重建流程填充
 
 
 class DetectionResultResponse(BaseModel):

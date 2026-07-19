@@ -10,6 +10,7 @@
 import { httpClient } from '@/network/http-client'
 import type {
   ReconstructionStatusResponse, ReconstructionResultResponse,
+  ReconResetRequest, ReconConfigResponse,
 } from '@/types/api'
 
 /** 查询重建引擎状态 */
@@ -23,4 +24,16 @@ export async function getReconstructionResult(since?: number) {
   const params = since !== undefined ? { since } : {}
   const res = await httpClient.get('/api/reconstruction/result', { params })
   return res.data as ReconstructionResultResponse
+}
+
+/** 重置重建引擎（切换参数） */
+export async function resetReconstruction(data: ReconResetRequest) {
+  const res = await httpClient.post('/api/reconstruction/reset', data)
+  return res.data as { status: string; mode: string }
+}
+
+/** 查询重建引擎当前配置 */
+export async function getReconConfig() {
+  const res = await httpClient.get('/api/reconstruction/config')
+  return res.data as ReconConfigResponse
 }

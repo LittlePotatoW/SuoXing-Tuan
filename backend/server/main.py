@@ -28,6 +28,8 @@ from server.api.routes import (
     vehicle_router,
     reconstruction_router,
     detection_router,
+    session_router,
+    report_router,
 )
 
 
@@ -44,6 +46,8 @@ def create_app() -> FastAPI:
     app.include_router(vehicle_router)
     app.include_router(reconstruction_router)
     app.include_router(detection_router)
+    app.include_router(session_router)
+    app.include_router(report_router)
 
     return app
 

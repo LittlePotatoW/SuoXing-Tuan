@@ -65,6 +65,8 @@ def reset_reconstruction(body: ReconResetRequest):
         mode=body.mode,
         frame_threshold=body.frame_threshold,
         voxel_size=body.voxel_size,
+        yolo_enabled=(body.yolo_enabled
+                      if body.yolo_enabled is not None else True),
     )
     engine = ReconstructionEngine.create()
     return {"status": "ok", "mode": engine._mode}

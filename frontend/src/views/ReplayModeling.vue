@@ -5,77 +5,150 @@
 <template>
   <div class="page">
     <div class="toolbar">
-      <select class="sel" v-model="selectedSession">
+      <select class="sel" v-model="selectedSession" @focus="fetchSessions">
         <option value="">选择 Session...</option>
         <option v-for="s in sessions" :key="s" :value="s">{{ s }}</option>
       </select>
-      <button class="btn" :disabled="!selectedSession" @click="replaying = true">
-        开始回放重建
+      <button class="btn" :disabled="!selectedSession || replaying" @click="startReplay">
+        {{ replaying ? '回放中...' : '开始回放重建' }}
       </button>
     </div>
 
     <div class="main-row">
       <div class="scene-panel">
         <div class="panel-title">3D 场景 (重建结果)</div>
-        <div class="scene-placeholder">Three.js 场景 — 待渲染引擎实现</div>
+        <SceneView ref="sceneRef" />
       </div>
 
       <div class="defect-panel">
-        <div class="panel-title">缺陷列表</div>
+        <div class="panel-title">缺陷列表 ({{ defects.length }})</div>
         <table class="defect-table">
           <thead><tr><th>ID</th><th>类型</th><th>置信度</th><th>位置</th></tr></thead>
           <tbody>
-            <tr v-for="d in mockDefects" :key="d.id" @click="selected = d"
+            <tr v-for="d in defects" :key="d.id" @click="selected = d"
               :class="{ selected: selected?.id === d.id }">
-              <td>{{ d.id }}</td><td>{{ d.type }}</td><td>{{ d.conf }}</td>
-              <td>{{ d.pos }}</td>
+              <td>{{ d.id }}</td>
+              <td>{{ d.class_name }}</td>
+              <td>{{ (d.confidence * 100).toFixed(0) }}%</td>
+              <td>{{ d.center_3d?.map((v: number) => v.toFixed(2)).join(', ') || '-' }}</td>
             </tr>
-            <tr v-if="!hasReport"><td colspan="4" class="empty">此 Session 未保存 Report</td></tr>
+            <tr v-if="!defects.length"><td colspan="4" class="empty">暂无缺陷</td></tr>
           </tbody>
         </table>
-        <div v-if="selected && hasReport" class="preview-mini">
-          <div class="preview-title">#{{ selected.id }} 标注图</div>
-          <div class="preview-placeholder">（标注图预览区）</div>
-        </div>
       </div>
     </div>
 
     <div v-if="replaying" class="progress-bar">
-      <div class="progress-label">重建进度: {{ progress }}%  耗时: {{ elapsed }}s  帧数: {{ totalFrames }}</div>
-      <div class="progress-track"><div class="progress-fill" :style="{ width: progress + '%' }"></div></div>
+      <div class="progress-label">已发送: {{ sentFrames }}/{{ totalFrames }} 帧</div>
+      <div class="progress-track"><div class="progress-fill" :style="{ width: (totalFrames ? (sentFrames / totalFrames) * 100 : 0) + '%' }"></div></div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, onMounted, onUnmounted } from 'vue'
+import SceneView from '@/components/three/SceneView.vue'
+import { resetReconstruction, getReconstructionResult } from '@/api/reconstruction'
+import { resetEstimator, postTelemetry, postFrame } from '@/api/vehicle'
+import { loadSession } from '@/services/data-loader/local-loader'
+import type { Session } from '@/services/data-loader/local-loader'
+import { listSessions } from '@/api/session'
+import { reconDefaults } from '@/config/defaults'
+import type { DetectionItem } from '@/types/api'
 
-const sessions = ['隧道北段_20240718', '隧道南段_20240719', '测试路段_20240720']
+const sceneRef = ref<InstanceType<typeof SceneView> | null>(null)
+const sessions = ref<string[]>([])
 const selectedSession = ref('')
 const replaying = ref(false)
-const progress = ref(100)
-const elapsed = ref(2.3)
-const totalFrames = ref(1800)
-const hasReport = ref(true)
-const selected = ref<any>(null)
+const sentFrames = ref(0)
+const totalFrames = ref(0)
+const selected = ref<DetectionItem | null>(null)
+const defects = ref<DetectionItem[]>([])
 
-const mockDefects = [
-  { id: 1, type: '裂缝', conf: 0.93, pos: '10.5, 2.1' },
-  { id: 2, type: '渗水', conf: 0.87, pos: '12.1, 1.8' },
-]
+let pollTimer: ReturnType<typeof setInterval> | null = null
+
+async function fetchSessions() {
+  try {
+    const list = await listSessions()
+    sessions.value = list.map((s) => s.name)
+  } catch (e) { console.warn('获取 session 列表失败:', e) }
+}
+
+onMounted(() => { fetchSessions() })
+
+function stopPolling() {
+  if (pollTimer) { clearInterval(pollTimer); pollTimer = null }
+}
+
+async function startReplay() {
+  if (!selectedSession.value) return
+
+  let session: Session
+  try {
+    session = await loadSession(selectedSession.value)
+  } catch {
+    return
+  }
+
+  replaying.value = true
+  sentFrames.value = 0
+  totalFrames.value = session.frames.length
+  defects.value = []
+  selected.value = null
+  sceneRef.value?.resetScene()
+
+  try {
+    await resetReconstruction({
+      mode: reconDefaults.mode, frame_threshold: reconDefaults.frame_threshold, voxel_size: reconDefaults.voxel_size,
+    })
+    await resetEstimator({ mode: 'bicycle' })
+  } catch { /* backend unreachable */ }
+
+  for (const t of session.telemetryList) {
+    try { await postTelemetry(t) } catch { /* ignore */ }
+  }
+
+  for (const fi of session.frames) {
+    try {
+      const frame = await session.readFrame(fi.id)
+      await postFrame(frame)
+    } catch { /* ignore */ }
+    sentFrames.value++
+  }
+
+  // 发完帧后轮询重建结果
+  stopPolling()
+  let lastTs = 0
+  pollTimer = setInterval(async () => {
+    try {
+      const result = await getReconstructionResult(lastTs || undefined)
+      if (result.timestamp > 0) {
+        lastTs = result.timestamp
+        if (result.point_cloud_url) {
+          sceneRef.value?.updatePointCloud(result.point_cloud_url)
+        }
+        if (result.detections && result.detections.length > 0) {
+          defects.value = result.detections
+          sceneRef.value?.updateCracks(result.detections)
+        }
+      }
+    } catch { /* no result yet */ }
+  }, 2000)
+}
+
+onUnmounted(() => { stopPolling() })
 </script>
 
 <style scoped>
 .page { display: flex; flex-direction: column; height: 100%; gap: 0; }
 .toolbar { display: flex; gap: 10px; padding: 8px 0; align-items: center; }
-.sel { padding: 4px 8px; border: 1px solid #ccc; border-radius: 4px; }
+.sel { padding: 5px 8px; border: 1px solid #ccc; border-radius: 4px; font-size: 13px; min-width: 160px; }
 .btn { padding: 5px 16px; background: #3a7bd5; color: #fff; border: none; border-radius: 4px; cursor: pointer; font-size: 13px; }
 .btn:disabled { background: #aaa; cursor: default; }
 .main-row { display: flex; gap: 12px; flex: 1; min-height: 0; }
-.scene-panel { flex: 1; border: 1px solid #ddd; border-radius: 6px; display: flex; flex-direction: column; }
+.scene-panel { flex: 1; border: 1px solid #ddd; border-radius: 6px; display: flex; flex-direction: column; overflow: hidden; }
 .defect-panel { width: 280px; border: 1px solid #ddd; border-radius: 6px; display: flex; flex-direction: column; overflow: auto; }
-.panel-title { padding: 8px 12px; font-size: 13px; color: #666; border-bottom: 1px solid #eee; background: #fafafa; }
-.scene-placeholder { flex: 1; display: flex; align-items: center; justify-content: center; color: #aaa; font-size: 14px; }
+.panel-title { padding: 8px 12px; font-size: 13px; color: #666; border-bottom: 1px solid #eee; background: #fafafa; flex-shrink: 0; }
 .defect-table { width: 100%; border-collapse: collapse; font-size: 12px; }
 .defect-table th { background: #f5f5f5; padding: 6px; text-align: left; border-bottom: 2px solid #ddd; }
 .defect-table td { padding: 5px 6px; border-bottom: 1px solid #eee; cursor: pointer; }

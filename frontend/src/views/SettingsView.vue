@@ -14,7 +14,10 @@
       <div class="addr-row">
         <div class="addr-group"><label>遥测源</label> <input class="in" v-model="addr.telemetry" placeholder="IP" /> :<input class="in port" v-model.number="port.telemetry" /></div>
         <div class="addr-group"><label>帧数据源</label> <input class="in" v-model="addr.frame" placeholder="IP" /> :<input class="in port" v-model.number="port.frame" /></div>
-        <div class="addr-group"><label>后端API</label> <input class="in" v-model="addr.backend" placeholder="IP" /> :<input class="in port" v-model.number="port.backend" /></div>
+        <div class="addr-group"><label>后端API</label> <input class="in" v-model="addr.backend" placeholder="IP" /> :<input class="in port" v-model.number="port.backend" />
+          <button class="test-btn" @click="testBackend">{{ testing ? '测试中...' : '测试连接' }}</button>
+          <span v-if="testResult !== null" :class="testResult ? 'ok' : 'fail'">{{ testResult ? '✓ 连通' : '✗ 失败' }}</span>
+        </div>
       </div>
     </section>
 
@@ -56,22 +59,125 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, watch, onMounted } from 'vue'
+import { useSettingsStore } from '@/stores/settings'
+import { reconDefaults, estimationDefaults } from '@/config/defaults'
+import { httpClient } from '@/network/http-client'
+import { resetEstimator } from '@/api/vehicle'
+import { resetReconstruction } from '@/api/reconstruction'
 
-const netMode = ref('lan')
-const addr = ref({ telemetry: '192.168.1.100', frame: '192.168.1.100', backend: '127.0.0.1' })
+const settings = useSettingsStore()
+
+// --- 网络参数 ---
+// 表单本地副本，初始化时从 store 读（store 数据源是 frontend/config.yaml）
+const netMode = ref(settings.mode)
+const addr = ref({ telemetry: '', frame: '', backend: '' })
 const port = ref({ telemetry: 8001, frame: 8002, backend: 8000 })
 
-const reconMode = ref('incremental')
-const frameThreshold = ref(30)
-const voxelSize = ref(0.01)
+syncFormFromStore()
+
+function syncFormFromStore() {
+  netMode.value = settings.mode
+  addr.value = {
+    telemetry: settings.telemetry.host,
+    frame: settings.frame.host,
+    backend: settings.backend.host,
+  }
+  port.value = {
+    telemetry: settings.telemetry.port,
+    frame: settings.frame.port,
+    backend: settings.backend.port,
+  }
+}
+
+// 挂载时从后端读取当前运行中的配置
+onMounted(async () => {
+  try {
+    const estRes = await httpClient.get('/api/vehicle/estimator/config')
+    const cfg = estRes.data
+    estMode.value = cfg.mode || estimationDefaults.mode
+    wheelbase.value = cfg.wheelbase ?? estimationDefaults.wheelbase
+    constSpeed.value = cfg.constant_speed ?? estimationDefaults.constant_speed
+  } catch { /* 后端不可达，用 config.yaml 默认值 */ }
+
+  try {
+    const reconRes = await httpClient.get('/api/reconstruction/config')
+    const cfg = reconRes.data
+    reconMode.value = cfg.mode || reconDefaults.mode
+    frameThreshold.value = cfg.frame_threshold ?? reconDefaults.frame_threshold
+    voxelSize.value = cfg.voxel_size ?? reconDefaults.voxel_size
+  } catch { /* 后端不可达 */ }
+})
+
+// 状态栏改了模式 → 表单跟随
+watch(() => settings.mode, () => { syncFormFromStore() })
+
+// 用户改了模式 radio → 切 store → 再同步 addr/port 显示
+watch(netMode, (v) => {
+  settings.switchMode(v)
+  syncFormFromStore()
+})
+
+// 用户编辑了地址 → 写入 store
+watch([addr, port], () => {
+  settings.telemetry.host = addr.value.telemetry
+  settings.frame.host = addr.value.frame
+  settings.backend.host = addr.value.backend
+  settings.telemetry.port = port.value.telemetry
+  settings.frame.port = port.value.frame
+  settings.backend.port = port.value.backend
+  settings.applyBackendURL()
+}, { deep: true })
+
+// --- 重建参数 — 初始值来自 frontend/config.yaml ---
+const reconMode = ref(reconDefaults.mode)
+const frameThreshold = ref(reconDefaults.frame_threshold)
+const voxelSize = ref(reconDefaults.voxel_size)
 const reconApplied = ref(false)
 
-const estMode = ref('bicycle')
-const wheelbase = ref(2.0)
-const constSpeed = ref(1.0)
-const fusionWeight = ref(0.5)
+watch(reconApplied, async (v) => {
+  if (!v) return
+  try {
+    await resetReconstruction({
+      mode: reconMode.value,
+      frame_threshold: frameThreshold.value,
+      voxel_size: voxelSize.value,
+    })
+  } catch { /* 后端不可达 */ }
+  reconApplied.value = false
+})
+
+// --- 估计参数 — 初始值来自 frontend/config.yaml ---
+const estMode = ref(estimationDefaults.mode)
+const wheelbase = ref(estimationDefaults.wheelbase)
+const constSpeed = ref(estimationDefaults.constant_speed)
+const fusionWeight = ref(estimationDefaults.fusion_weight)
 const estimatorApplied = ref(false)
+
+watch(estimatorApplied, async (v) => {
+  if (!v) return
+  try {
+    await resetEstimator({
+      mode: estMode.value,
+      wheelbase: wheelbase.value,
+      constant_speed: constSpeed.value,
+    })
+  } catch { /* 后端不可达 */ }
+  estimatorApplied.value = false
+})
+
+// --- 测试后端连接 ---
+const testing = ref(false)
+const testResult = ref<boolean | null>(null)
+
+async function testBackend() {
+  testing.value = true; testResult.value = null
+  try {
+    const resp = await fetch(`http://${addr.value.backend}:${port.value.backend}/api/vehicle/position`)
+    testResult.value = resp.ok
+  } catch { testResult.value = false }
+  testing.value = false
+}
 </script>
 
 <style scoped>
@@ -90,4 +196,8 @@ const estimatorApplied = ref(false)
 .in.sm { width: 70px; }
 .in.port { width: 55px; }
 .applied-msg { margin-top: 6px; color: #27ae60; font-size: 12px; }
+.test-btn { padding: 2px 10px; background: #666; color: #fff; border: none; border-radius: 3px; cursor: pointer; font-size: 11px; white-space: nowrap; }
+.test-btn:hover { background: #888; }
+.ok { color: #27ae60; font-size: 11px; }
+.fail { color: #e74c3c; font-size: 11px; }
 </style>

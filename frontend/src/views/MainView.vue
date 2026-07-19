@@ -16,11 +16,11 @@
     </div>
 
     <div class="data-bar">
-      <span>位置: X={{ pos.x }}  Y={{ pos.y }}  H={{ pos.heading }}°</span>
+      <span>位置: X={{ pos.x.toFixed(2) }}  Y={{ pos.y.toFixed(2) }}  H={{ pos.heading.toFixed(1) }}°</span>
       <span class="sep">|</span>
-      <span>速度: {{ speed }} m/s</span>
+      <span>速度: {{ speed.toFixed(1) }} m/s</span>
       <span class="sep">|</span>
-      <span>转向: {{ steering }}°</span>
+      <span>转向: {{ steering.toFixed(1) }}°</span>
     </div>
 
     <div class="map-placeholder">
@@ -30,11 +30,25 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, computed, onMounted } from 'vue'
+import { usePolling } from '@/composables/usePolling'
+import { getPosition } from '@/api/vehicle'
+import { useVehicleStore } from '@/stores/vehicle'
 
+const vehicle = useVehicleStore()
 const pos = ref({ x: 0, y: 0, heading: 0 })
-const speed = ref(0)
-const steering = ref(0)
+const speed = computed(() => vehicle.speed)
+const steering = computed(() => vehicle.steeringAngle)
+
+const { start } = usePolling(async () => {
+  try {
+    const p = await getPosition()
+    pos.value = { x: p.x, y: p.y, heading: p.heading }
+    vehicle.updatePosition({ timestamp: p.timestamp, x: p.x, y: p.y, heading: p.heading })
+  } catch { /* backend unreachable */ }
+}, 1000)
+
+onMounted(() => { start() })
 </script>
 
 <style scoped>

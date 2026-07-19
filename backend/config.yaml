@@ -31,10 +31,10 @@ rgb_camera:
 depth_camera:
   width: 640                    # 深度图宽度 (px)
   height: 480                   # 深度图高度 (px)
-  fx: 0.0                       # x 方向焦距 (px)
-  fy: 0.0                       # y 方向焦距 (px)
-  cx: 0.0                       # 主点 x 坐标 (px)
-  cy: 0.0                       # 主点 y 坐标 (px)
+  fx: 573.0                     # x 方向焦距 (px), = 320/tan(58.4°/2)
+  fy: 572.0                     # y 方向焦距 (px), = 240/tan(45.5°/2)
+  cx: 320.0                     # 主点 x 坐标 (px)
+  cy: 240.0                     # 主点 y 坐标 (px)
   fps: 30                       # 帧率
   hfov: 58.4                    # 水平视场角 (度)
   vfov: 45.5                    # 垂直视场角 (度)
@@ -83,6 +83,6 @@ estimation:
 # YOLO 检测参数
 # -------------------------------------------
 detection:
-  model_path: "models/yolo.pt"  # 模型文件路径
+  model_path: "models/crack-detector.pt"  # 模型文件路径
   conf_threshold: 0.5           # 置信度阈值
-  device: "cuda"                # 推理设备: "cuda" / "cpu"
+  device: "cpu"                 # 推理设备: "cuda" / "cpu"

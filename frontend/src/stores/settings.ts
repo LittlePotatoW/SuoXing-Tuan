@@ -6,12 +6,13 @@
 //   导出 useSettingsStore()
 //     mode / telemetry / frame / backend (响应式状态)
 //     switchMode()  切换 LAN ↔ Server
-//     applyBackendURL()  更新 Layer 0 HTTP 连接地址
+//     applyBackendURL()  更新 HTTP 连接地址
+//     applyDevice(device)  选中设备一键填入 LAN 地址
 // ============================================================
 
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import { NETWORK_MODE, telemetrySource, frameSource, backendSource } from '@/config/defaults'
+import { NETWORK_MODE, telemetrySource, frameSource, backendConfig } from '@/config/defaults'
 import { setBaseURL } from '@/network/http-client'
 import type { NetworkMode } from '@/config/defaults'
 import type { LanDevice } from '@/composables/useLanScan'
@@ -21,11 +22,11 @@ export const useSettingsStore = defineStore('settings', () => {
 
   const telemetry = ref({ ...telemetrySource.lan })
   const frame = ref({ ...frameSource.lan })
-  const backend = ref({ ...backendSource.lan })
+  const backend = ref({ ...backendConfig })
 
   const sources = computed(() => ({
-    lan: { telemetry: telemetrySource.lan, frame: frameSource.lan, backend: backendSource.lan },
-    server: { telemetry: telemetrySource.server, frame: frameSource.server, backend: backendSource.server },
+    lan: { telemetry: telemetrySource.lan, frame: frameSource.lan },
+    server: { telemetry: telemetrySource.server, frame: frameSource.server },
   }))
 
   function applyBackendURL() {
@@ -37,7 +38,7 @@ export const useSettingsStore = defineStore('settings', () => {
     const cfg = sources.value[newMode]
     telemetry.value = { ...cfg.telemetry }
     frame.value = { ...cfg.frame }
-    backend.value = { ...cfg.backend }
+    // backend 永远不变，不随模式切换
     applyBackendURL()
   }
 
@@ -47,7 +48,6 @@ export const useSettingsStore = defineStore('settings', () => {
     frame.value = { host: device.ip, port: frame.value.port }
   }
 
-  // 初始化
   applyBackendURL()
 
   return { mode, telemetry, frame, backend, sources,

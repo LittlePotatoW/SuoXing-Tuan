@@ -43,7 +43,8 @@ class ReconstructionEngine:
     def __init__(self, config: dict,
                  mode: str | None = None,
                  frame_threshold: int | None = None,
-                 voxel_size: float | None = None):
+                 voxel_size: float | None = None,
+                 yolo_enabled: bool = True):
         recon_cfg = config.get('reconstruction', {})
         self._mode: str = mode or recon_cfg.get('mode', 'incremental')
         self._frame_threshold: int = (frame_threshold
@@ -52,6 +53,7 @@ class ReconstructionEngine:
         self._voxel_size: float = (voxel_size
                                    if voxel_size is not None
                                    else recon_cfg.get('voxel_size', 0.01))
+        self._yolo_enabled: bool = yolo_enabled
 
         self._buffer = FrameBuffer(threshold=self._frame_threshold)
         self._latest_result: _ReconstructionResult | None = None
@@ -67,6 +69,7 @@ class ReconstructionEngine:
     def create(cls, mode: str | None = None,
                frame_threshold: int | None = None,
                voxel_size: float | None = None,
+               yolo_enabled: bool = True,
                config: dict | None = None) -> 'ReconstructionEngine':
         global _instance
         with _lock:
@@ -76,7 +79,8 @@ class ReconstructionEngine:
                     config = get_config()
                 _instance = cls(config, mode=mode,
                                frame_threshold=frame_threshold,
-                               voxel_size=voxel_size)
+                               voxel_size=voxel_size,
+                               yolo_enabled=yolo_enabled)
                 _instance._running = True
             return _instance
 
@@ -120,6 +124,7 @@ class ReconstructionEngine:
             'mode': self._mode,
             'frame_threshold': self._frame_threshold,
             'voxel_size': self._voxel_size,
+            'yolo_enabled': self._yolo_enabled,
             'frame_count': len(self._buffer),
             'status': self._current_status(),
         }
@@ -205,6 +210,32 @@ class ReconstructionEngine:
                              mode=self._mode,
                              voxel_size=self._voxel_size)
 
+            # YOLO 检测（如果开启）
+            detections = []
+            if self._yolo_enabled:
+                try:
+                    from server.detection import Detector, apply_nms, map_to_3d
+                    detector = Detector.create()
+                    if detector.available:
+                        all_dets = []
+                        for f in frames:
+                            try:
+                                fd = detector.detect(f.image)
+                                all_dets.extend(fd)
+                            except Exception:
+                                logger.exception("检测帧 %s 失败", f.frame_id)
+                        if all_dets:
+                            all_dets = apply_nms(all_dets)
+                            try:
+                                all_dets = map_to_3d(
+                                    all_dets, result_pc, None)
+                            except Exception:
+                                logger.exception("3D 映射失败")
+                        detections = all_dets
+                        logger.info("YOLO 检测完成: %d 个缺陷", len(detections))
+                except Exception:
+                    logger.exception("YOLO 检测管线异常")
+
             # 导出点云文件
             pc_url = _save_pointcloud(result_pc, config)
 
@@ -215,7 +246,7 @@ class ReconstructionEngine:
                 timestamp=time.time(),
                 point_cloud_url=pc_url or "",
                 point_cloud=result_pc,  # 增量模式下次用
-                detections=[],
+                detections=detections,
             )
 
 

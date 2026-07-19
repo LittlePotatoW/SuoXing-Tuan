@@ -31,11 +31,13 @@ class ReconResetRequest(BaseModel):
     mode: str | None = Field(None, description="full|incremental")
     frame_threshold: int | None = None
     voxel_size: float | None = None
+    yolo_enabled: bool | None = Field(None, description="是否在重建中启用 YOLO 检测")
 
 
 class ReconConfigResponse(BaseModel):
     mode: str
     frame_threshold: int
     voxel_size: float
+    yolo_enabled: bool = True
     frame_count: int
     status: str

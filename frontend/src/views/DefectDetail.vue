@@ -5,7 +5,7 @@
 <template>
   <div class="page">
     <div class="toolbar">
-      <select class="sel" v-model="selectedReport">
+      <select class="sel" v-model="selectedReport" @focus="fetchReports">
         <option value="">选择 Report...</option>
         <option v-for="r in reports" :key="r" :value="r">{{ r }}</option>
       </select>
@@ -32,7 +32,7 @@
           <div class="preview-placeholder">（标注图预览）</div>
           <div class="note-row">
             <input v-model="note" class="note-input" placeholder="备注..." />
-            <button class="btn sm">保存</button>
+            <button class="btn sm" @click="saveNote">保存</button>
           </div>
         </div>
         <div v-else class="preview-empty">点击左侧列表查看标注图</div>
@@ -42,24 +42,57 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, watch, onMounted } from 'vue'
+import { listReports, loadReport } from '@/api/report'
 
 const selected = ref<any>(null)
 const note = ref('')
 const selectedReport = ref('')
-const reports = ['隧道北段_20240718', '隧道南段_20240719']
-
-const defects = [
+const reports = ref<string[]>([])
+const defects = ref<any[]>([
   { id: 1, type: '裂缝', conf: 0.93, pos: '10.5, 2.1, -3.0' },
   { id: 2, type: '渗水', conf: 0.87, pos: '12.1, 1.8, -2.5' },
   { id: 3, type: '裂缝', conf: 0.76, pos: '14.0, 1.5, -2.0' },
-]
+])
+
+async function fetchReports() {
+  try {
+    const list = await listReports()
+    reports.value = list.map((r) => r.filename)
+  } catch (e) { console.warn('获取 report 列表失败:', e) }
+}
+
+onMounted(() => { fetchReports() })
+
+watch(selectedReport, async (filename) => {
+  if (!filename) { defects.value = []; return }
+  try {
+    const data = await loadReport(filename)
+    if (data.defects) {
+      defects.value = data.defects.map((d: any) => ({
+        id: d.id, type: d.class_name,
+        conf: (d.confidence * 100).toFixed(0) + '%',
+        pos: (d.center_3d || [0, 0, 0]).join(', '),
+      }))
+    }
+  } catch { /* 加载失败 */ }
+})
+
+watch(selected, (d) => {
+  note.value = d ? (localStorage.getItem(`defect-note-${d.id}`) ?? '') : ''
+})
+
+function saveNote() {
+  if (selected.value) {
+    localStorage.setItem(`defect-note-${selected.value.id}`, note.value)
+  }
+}
 </script>
 
 <style scoped>
 .page { display: flex; flex-direction: column; height: 100%; gap: 0; }
 .toolbar { display: flex; gap: 8px; padding: 8px 0; align-items: center; }
-.sel { padding: 5px 8px; border: 1px solid #ccc; border-radius: 4px; font-size: 13px; }
+.sel { padding: 5px 8px; border: 1px solid #ccc; border-radius: 4px; font-size: 13px; min-width: 160px; }
 .btn { padding: 5px 14px; background: #3a7bd5; color: #fff; border: none; border-radius: 4px; cursor: pointer; font-size: 13px; }
 .btn:hover { background: #2d6ac4; }
 .btn.sm { padding: 3px 10px; font-size: 12px; }
