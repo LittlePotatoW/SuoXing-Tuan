@@ -11,10 +11,11 @@
 
 import { onUnmounted, watch } from 'vue'
 import { createWSClient } from '@/network/websocket-client'
-import { parseTelemetry } from '@/services/pack-unpack/parse'
+import { parseTelemetry, parseFrame } from '@/services/pack-unpack/parse'
 import { useSettingsStore } from '@/stores/settings'
 import { useConnectionStore } from '@/stores/connection'
 import { useVehicleStore } from '@/stores/vehicle'
+import { postTelemetry, postFrame } from '@/api/vehicle'
 
 export function useConnection() {
   const settings = useSettingsStore()
@@ -37,13 +38,20 @@ export function useConnection() {
       try {
         const data = parseTelemetry(raw)
         vehicle.updateTelemetry(data.speed, data.steering_angle)
+        // 转发给后端 API
+        postTelemetry(data).catch(() => {})
       } catch { /* ignore malformed */ }
     })
     telemetryWS.connect()
 
     frameWS = createWSClient(buildURL(settings.frame))
     frameWS.onStatusChange(conn.setFrameStatus)
-    // frame 数据由上层决定如何处理
+    frameWS.onMessage((raw) => {
+      try {
+        const data = parseFrame(raw)
+        postFrame(data).catch(() => {})
+      } catch { /* ignore malformed */ }
+    })
     frameWS.connect()
   }
 

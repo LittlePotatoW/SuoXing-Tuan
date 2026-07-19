@@ -14,6 +14,7 @@ import { ref, computed } from 'vue'
 import { NETWORK_MODE, telemetrySource, frameSource, backendSource } from '@/config/defaults'
 import { setBaseURL } from '@/network/http-client'
 import type { NetworkMode } from '@/config/defaults'
+import type { LanDevice } from '@/composables/useLanScan'
 
 export const useSettingsStore = defineStore('settings', () => {
   const mode = ref<NetworkMode>(NETWORK_MODE.LAN)
@@ -40,8 +41,15 @@ export const useSettingsStore = defineStore('settings', () => {
     applyBackendURL()
   }
 
+  function applyDevice(device: LanDevice) {
+    mode.value = NETWORK_MODE.LAN
+    telemetry.value = { host: device.ip, port: telemetry.value.port }
+    frame.value = { host: device.ip, port: frame.value.port }
+  }
+
   // 初始化
   applyBackendURL()
 
-  return { mode, telemetry, frame, backend, sources, switchMode, applyBackendURL }
+  return { mode, telemetry, frame, backend, sources,
+           switchMode, applyBackendURL, applyDevice }
 })
