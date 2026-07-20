@@ -98,7 +98,7 @@ watch(wsConnected, (v) => {
       fallbackTimer = setInterval(fallbackPoll, 3000)
     }
   }
-})
+}, { immediate: true })
 
 async function fallbackPoll() {
   try {

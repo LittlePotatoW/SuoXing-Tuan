@@ -29,7 +29,7 @@ export function useReconstructionWS(
 
   let ws: WebSocket | null = null
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null
-  let disposed = false
+  let _stopped = false
 
   function getWsUrl(): string {
     const host = settings.backend?.host || '127.0.0.1'
@@ -38,7 +38,8 @@ export function useReconstructionWS(
   }
 
   function connect(): void {
-    if (disposed || (ws && ws.readyState === WebSocket.OPEN)) return
+    _stopped = false
+    if (ws && ws.readyState === WebSocket.OPEN) return
 
     try {
       ws = new WebSocket(getWsUrl())
@@ -81,16 +82,16 @@ export function useReconstructionWS(
   }
 
   function scheduleReconnect(): void {
-    if (disposed) return
+    if (_stopped) return
     if (reconnectTimer) clearTimeout(reconnectTimer)
     reconnectTimer = setTimeout(connect, 3000)
   }
 
   function disconnect(): void {
-    disposed = true
+    _stopped = true
     if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null }
     if (ws) {
-      ws.onclose = null  // 防止触发重连
+      ws.onclose = null
       ws.close()
       ws = null
     }

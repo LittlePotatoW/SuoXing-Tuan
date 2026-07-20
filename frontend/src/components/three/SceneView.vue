@@ -15,7 +15,7 @@
 import { ref, onMounted, onUnmounted } from 'vue'
 import { SceneManager } from '@/services/renderer/three-scene'
 import { addToScene, type MeshData } from '@/services/renderer/point-cloud'
-import { addCracks } from '@/services/renderer/annotations'
+import { addCracks, resetCrackCache } from '@/services/renderer/annotations'
 import type { DetectionItem } from '@/types/api'
 
 const containerRef = ref<HTMLElement | null>(null)
@@ -71,6 +71,7 @@ function updateCracks(cracks: DetectionItem[]): void {
 
 function resetScene(): void {
   sceneMgr?.resetScene()
+  resetCrackCache()
   pointCount.value = 0
   crackCount.value = 0
 }

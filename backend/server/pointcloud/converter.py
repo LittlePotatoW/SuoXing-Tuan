@@ -3,9 +3,9 @@
 # 点云转换层 (Layer 3.5)：深度图 → 三维点云（针孔模型）
 #
 # 设计与用法:
-#   导出 depth_to_pointcloud() 函数
+#   导出 decode_depth() — 解码深度图，返回有序+无序点云 (给 YOLO 3D 映射用)
+#   导出 depth_to_pointcloud() — 向后兼容，返回 N×3 无序点云
 #   输入: base64 编码的 16-bit PNG 深度图
-#   输出: N×3 numpy float32 点云数组 (相机坐标系)
 # ============================================================
 #   深度值单位: 原始为 mm, 除 depth_scale 得米
 #   针孔模型:  X=(u-cx)*Z/fx, Y=(v-cy)*Z/fy, Z=depth/scale
@@ -19,15 +19,18 @@ import numpy as np
 logger = logging.getLogger(__name__)
 
 
-def depth_to_pointcloud(depth_b64: str, subsample: int = 1) -> np.ndarray | None:
-    """将 base64 深度图转为 N×3 点云（相机坐标系）
+def decode_depth(depth_b64: str, subsample: int = 1) -> tuple | None:
+    """解码深度图，返回有序和无序点云
 
     Args:
-        depth_b64:  base64 编码的 16-bit PNG 深度图, 像素值 = 深度 mm
-        subsample: 采样步长, 1=每像素, 2=每2x2取1点, 3=每3x3取1点
+        depth_b64: base64 编码的 16-bit PNG 深度图
+        subsample: 采样步长
 
     Returns:
-        (N, 3) float32 点云, 单位为米; 解析失败返回 None
+        (ordered_pc, depth_m, pc) 或 None:
+            ordered_pc: (H, W, 3) float32  有序点云, 无效区域为 NaN
+            depth_m:    (H, W)    float32  深度值(米), 无效区域为 0
+            pc:         (N, 3)    float32  无序有效点云
     """
     try:
         import cv2
@@ -63,24 +66,45 @@ def depth_to_pointcloud(depth_b64: str, subsample: int = 1) -> np.ndarray | None
         logger.warning("深度相机内参未配置, 无法生成点云")
         return None
 
-    # 深度图降采样
     if subsample > 1:
         depth_img = depth_img[::subsample, ::subsample]
 
+    H, W = depth_img.shape
     depth_m = depth_img.astype(np.float32) / depth_scale
 
-    mask = (depth_m > min_depth) & (depth_m < max_depth)
-    v, u = np.where(mask)
-    z = depth_m[v, u]
+    # 有序点云 (H, W, 3)，无效区域填 NaN
+    u_grid, v_grid = np.meshgrid(np.arange(W), np.arange(H))
+    z = depth_m
+    x = (u_grid * subsample - cx) * z / fx
+    y = (v_grid * subsample - cy) * z / fy
+    ordered_pc = np.stack([x, y, z], axis=-1).astype(np.float32)
 
-    # 还原原始像素坐标（采样后的 u,v 需要乘回步长）
-    u_real = u * subsample
-    v_real = v * subsample
+    # 有效范围外的区域设 NaN
+    invalid = (z <= min_depth) | (z >= max_depth) | (z == 0)
+    ordered_pc[invalid] = np.nan
+    depth_m[invalid] = 0.0
 
-    x = (u_real - cx) * z / fx
-    y = (v_real - cy) * z / fy
+    # 无序有效点云
+    mask = ~invalid
+    vs, us = np.where(mask)
+    pc = ordered_pc[vs, us, :]
+    pc = pc[np.isfinite(pc).all(axis=1)]
 
-    result = np.column_stack([x, y, z]).astype(np.float32)
-    # 过滤 NaN / Inf（深度图边缘等异常值）
-    result = result[np.isfinite(result).all(axis=1)]
-    return result
+    return ordered_pc, depth_m, pc
+
+
+def depth_to_pointcloud(depth_b64: str, subsample: int = 1) -> np.ndarray | None:
+    """将 base64 深度图转为 N×3 无序点云（向后兼容）
+
+    Args:
+        depth_b64:  base64 编码的 16-bit PNG 深度图
+        subsample: 采样步长
+
+    Returns:
+        (N, 3) float32 点云, 单位为米; 解析失败返回 None
+    """
+    decoded = decode_depth(depth_b64, subsample)
+    if decoded is None:
+        return None
+    _, _, pc = decoded
+    return pc

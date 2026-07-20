@@ -44,7 +44,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, onUnmounted } from 'vue'
 import FileDropZone from '@/components/common/FileDropZone.vue'
 import { fileToBase64 } from '@/services/pack-unpack/parse'
 import { postDetectionImage, getDetectionResultAnnotated } from '@/api/detection'
@@ -102,6 +102,10 @@ async function runDetection() {
   } catch { /* backend unreachable */ }
   detecting.value = false
 }
+
+onUnmounted(() => {
+  if (previewUrl.value) URL.revokeObjectURL(previewUrl.value)
+})
 </script>
 
 <style scoped>

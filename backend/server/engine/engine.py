@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from server.engine.frame_buffer import FrameBuffer, FrameEntry
-from server.pointcloud import depth_to_pointcloud
+from server.pointcloud import decode_depth
 from server.reconstruction import map_frames, fuse
 
 logger = logging.getLogger(__name__)
@@ -100,18 +100,59 @@ class ReconstructionEngine:
 
     def push_frame(self, frame_id: str, timestamp: float,
                    image: str, depth_map: str) -> None:
-        """接收一帧数据（RGB + 深度图 base64），缓存后检查是否触发重建"""
+        """接收一帧数据（RGB + 深度图 base64），解码 + per-frame YOLO，缓存后检查是否触发重建"""
+        # 1. 解码深度图（一次性），拿到有序和无序点云
+        decoded = decode_depth(depth_map)
+        if decoded is None:
+            return
+        ordered_pc, depth_m, pc = decoded
+
+        # 2. YOLO per-frame（如果开启）— 2D 检测 + NMS + 3D 映射
+        dets = []
+        if self._yolo_enabled:
+            try:
+                from server.detection import Detector, apply_nms, map_to_3d
+                detector = Detector.create()
+                if detector.available:
+                    fd = detector.detect(image)
+                    if fd:
+                        fd = apply_nms(fd)                         # per-frame NMS
+                        fd = map_to_3d(fd, ordered_pc, depth_m)    # 2D→3D，有序点云 ✓
+                        dets = fd
+            except Exception:
+                logger.exception("YOLO per-frame 失败, frame=%s", frame_id)
+
+        # 2.5 将 center_3d 从相机坐标变换到世界坐标（对齐 mesh 坐标系）
+        if dets:
+            try:
+                from server.estimation import PositionEstimator
+                estimator = PositionEstimator.create()
+                pos = estimator.get_position_at(timestamp)
+                from server.config import get_config
+                ext_cfg = get_config().get('camera_to_vehicle', {})
+                ext_rot = ext_cfg.get('rotation', [0.0, 0.0, 0.0])
+                ext_trans = ext_cfg.get('translation', [0.0, 0.0, 0.0])
+                from server.reconstruction.mapper import _camera_to_world
+                import numpy as np
+                for d in dets:
+                    c3 = np.array(d['center_3d'], dtype=np.float32).reshape(1, 3)
+                    w3 = _camera_to_world(c3, {'x': pos.x, 'y': pos.y, 'heading': pos.heading},
+                                          ext_rot, ext_trans)
+                    d['center_3d'] = w3[0].tolist()
+            except Exception:
+                logger.exception("center_3d 坐标变换失败")
+
+        # 3. 存 buffer（带预计算点云和检测结果）
         entry = FrameEntry(
-            frame_id=frame_id,
-            timestamp=timestamp,
-            image=image,
-            depth_map=depth_map,
+            frame_id=frame_id, timestamp=timestamp,
+            image=image, depth_map=depth_map,
+            point_cloud=pc, detections=dets,
         )
         self._buffer.push(entry)
         self._frame_count_total += 1
 
-        logger.debug("push frame %s, buffer=%d/%d",
-                     frame_id, len(self._buffer), self._buffer.threshold)
+        logger.debug("push frame %s, buffer=%d/%d, dets=%d",
+                     frame_id, len(self._buffer), self._buffer.threshold, len(dets))
 
         if self._buffer.is_ready():
             self._trigger()
@@ -176,20 +217,16 @@ class ReconstructionEngine:
             from server.config import get_config
             config = get_config()
 
-            subsample = config.get('depth', {}).get('subsample', 1)
-            surface_enabled = config.get('reconstruction', {}).get('surface', {}).get('enabled', False)
-
-            # 获取每帧的位置
+            # 获取每帧的位置 + 直接用预计算点云（push_frame 已解码）
             from server.estimation import PositionEstimator
             estimator = PositionEstimator.create()
 
-            # 深度图 → 点云 + 查询位姿
             point_clouds = []
             positions = []
             raw_points = 0
             for f in frames:
                 try:
-                    pc = depth_to_pointcloud(f.depth_map, subsample=subsample)
+                    pc = f.point_cloud
                     if pc is not None and len(pc) > 0:
                         pos = estimator.get_position_at(f.timestamp)
                         raw_points += len(pc)
@@ -217,49 +254,34 @@ class ReconstructionEngine:
                              mode=self._mode,
                              voxel_size=self._voxel_size)
 
-            # YOLO 检测（如果开启）
+            # 收集 per-frame YOLO 结果 + 跨帧 NMS
             detections = []
             if self._yolo_enabled:
-                try:
-                    from server.detection import Detector, apply_nms
-                    detector = Detector.create()
-                    if detector.available:
-                        all_dets = []
-                        for f in frames:
-                            try:
-                                fd = detector.detect(f.image)
-                                all_dets.extend(fd)
-                            except Exception:
-                                logger.exception("检测帧 %s 失败", f.frame_id)
-                        if all_dets:
-                            all_dets = apply_nms(all_dets)
-                            # TODO: 3D 映射需要有序点云 (H,W,3) + 深度图，
-                            # 当前 depth_to_pointcloud 返回无序 (N,3)，
-                            # 需重构点云数据流后再启用 map_to_3d
+                all_dets = []
+                for f in frames:
+                    all_dets.extend(f.detections)
+                if all_dets:
+                    try:
+                        from server.detection import apply_nms
+                        detections = apply_nms(all_dets)  # 跨帧 NMS
+                    except Exception:
+                        logger.exception("跨帧 NMS 失败")
                         detections = all_dets
-                except Exception:
-                    logger.exception("YOLO 检测管线异常")
 
             # 表面重建（可选，由 config 控制；失败自动回退到点云）
             surface_cfg = config.get('reconstruction', {}).get('surface', {})
             surface_result = None
-            print(f"[ENGINE] surface enabled={surface_cfg.get('enabled', False)}, points={len(result_pc)}")
             if surface_cfg.get('enabled', False):
                 try:
                     from server.reconstruction import reconstruct_surface
-                    print(f"[ENGINE] calling reconstruct_surface...")
                     surface_result = reconstruct_surface(result_pc, config)
-                    print(f"[ENGINE] reconstruct_surface returned: {surface_result is not None}")
                 except Exception:
                     logger.exception("表面重建失败，回退到点云模式")
-                    print(f"[ENGINE] reconstruct_surface EXCEPTION, fallback to point cloud")
 
             if surface_result:
-                print(f"[ENGINE] using mesh: {surface_result['mesh']['vertex_count']} verts, {surface_result['mesh']['face_count']} faces")
                 pc_url = surface_result["url"]
                 mesh_data = surface_result["mesh"]
             else:
-                print(f"[ENGINE] using point cloud (surface disabled or failed)")
                 pc_url = _save_pointcloud(result_pc, config)
                 mesh_data = _build_pointcloud_data(result_pc)
 
@@ -267,11 +289,11 @@ class ReconstructionEngine:
             output_type = "mesh" if surface_result else "point-cloud"
             logger.info(
                 "=== 重建完成 (%.0fms) ===\n"
-                "  帧数: %d (成功), subsample=%d, 模式=%s\n"
+                "  帧数: %d (成功), 模式=%s\n"
                 "  原始点云: %d 点 → 拼接: %d 点 → 降采样: %d 点\n"
                 "  输出类型: %s, YOLO缺陷: %d\n"
                 "  文件: %s",
-                elapsed, len(point_clouds), subsample, self._mode,
+                elapsed, len(point_clouds), self._mode,
                 raw_points, len(merged), len(result_pc),
                 output_type, len(detections),
                 pc_url or "(内存)",

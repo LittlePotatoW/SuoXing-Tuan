@@ -29,6 +29,11 @@ const SPHERE_SEGMENTS = 8
 
 let _lastCrackHash = ''
 
+/** 重置裂纹缓存（resetScene 时调用） */
+export function resetCrackCache(): void {
+  _lastCrackHash = ''
+}
+
 /**
  * 添加缺陷标注球体
  *
