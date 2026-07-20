@@ -32,6 +32,9 @@ def decode_depth(depth_b64: str, subsample: int = 1) -> tuple | None:
             depth_m:    (H, W)    float32  深度值(米), 无效区域为 0
             pc:         (N, 3)    float32  无序有效点云
     """
+    if not depth_b64:
+        return None
+
     try:
         import cv2
     except ImportError:
@@ -43,10 +46,8 @@ def decode_depth(depth_b64: str, subsample: int = 1) -> tuple | None:
         depth_arr = np.frombuffer(depth_bytes, dtype=np.uint8)
         depth_img = cv2.imdecode(depth_arr, cv2.IMREAD_UNCHANGED)
         if depth_img is None:
-            logger.warning("深度图解码失败")
             return None
     except Exception:
-        logger.exception("深度图解码异常")
         return None
 
     from server.config import get_config
@@ -91,6 +92,51 @@ def decode_depth(depth_b64: str, subsample: int = 1) -> tuple | None:
     pc = pc[np.isfinite(pc).all(axis=1)]
 
     return ordered_pc, depth_m, pc
+
+
+def sample_colors(image_b64: str, depth_m: np.ndarray) -> np.ndarray | None:
+    """从 RGB 图中采样有效像素的颜色，对齐 decode_depth 输出的 pc
+
+    Args:
+        image_b64: base64 JPEG RGB 图像
+        depth_m: (H, W) float32 深度图（来自 decode_depth，0=无效）
+
+    Returns:
+        (N, 3) uint8 RGB 颜色数组，与 decode_depth 的 pc 对齐; 失败返回 None
+    """
+    if not image_b64 or depth_m is None:
+        return None
+
+    try:
+        import cv2
+    except ImportError:
+        return None
+
+    try:
+        img_bytes = base64.b64decode(image_b64)
+        img_arr = np.frombuffer(img_bytes, dtype=np.uint8)
+        bgr = cv2.imdecode(img_arr, cv2.IMREAD_COLOR)
+        if bgr is None:
+            return None
+    except Exception:
+        return None
+
+    Hd, Wd = depth_m.shape
+    Hb, Wb = bgr.shape[:2]
+
+    # 如果 RGB 和深度图尺寸一致（都是 subsample 后的），直接采样
+    if Hb == Hd and Wb == Wd:
+        rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
+        mask_valid = depth_m > 0
+        rows, cols = np.where(mask_valid)
+        return rgb[rows, cols, :].astype(np.uint8)
+
+    # 尺寸不一致：把 RGB resize 到深度图尺寸
+    rgb_full = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
+    rgb_resized = cv2.resize(rgb_full, (Wd, Hd))
+    mask_valid = depth_m > 0
+    rows, cols = np.where(mask_valid)
+    return rgb_resized[rows, cols, :].astype(np.uint8)
 
 
 def depth_to_pointcloud(depth_b64: str, subsample: int = 1) -> np.ndarray | None:

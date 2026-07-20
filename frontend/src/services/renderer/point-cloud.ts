@@ -42,7 +42,7 @@ export function addToScene(data: MeshData, sceneMgr: SceneManager): void {
   const verts = new Float32Array(cleanV)
 
   const hasFaces = data.faces && data.faces.length > 0
-  console.log('[MeshData] addToScene:', { vertCount: cleanV.length / 3, faceCount: hasFaces ? data.faces.length / 3 : 0, mode: hasFaces ? 'MESH' : 'POINT' })
+  console.log('[MeshData] addToScene:', { vertCount: cleanV.length / 3, faceCount: hasFaces ? data.faces.length / 3 : 0, mode: hasFaces ? 'MESH' : 'POINT', colorCount: data.vertex_colors?.length || 0, cleanColorCount: cleanC.length, firstColors: cleanC.slice(0, 12) })
 
   // 清旧数据
   sceneMgr.cloudGroup.traverse((child) => {

@@ -8,6 +8,7 @@
 #   与 Poisson 互斥，由 engine._trigger 根据 method 路由
 # ============================================================
 
+import base64
 import logging
 import os
 import time
@@ -62,7 +63,7 @@ def reconstruct_tsdf(frames, positions, config: dict) -> dict | None:
 
     volume = o3d.pipelines.integration.ScalableTSDFVolume(
         voxel_length=vl, sdf_trunc=st,
-        color_type=o3d.pipelines.integration.TSDFVolumeColorType.NoColor,
+        color_type=o3d.pipelines.integration.TSDFVolumeColorType.RGBD,
     )
 
     integrated = 0
@@ -71,12 +72,24 @@ def reconstruct_tsdf(frames, positions, config: dict) -> dict | None:
         if dm is None:
             continue
 
-        # 深度米 → 毫米 uint16
         depth_mm = (dm * 1000).clip(0, 65535).astype(np.uint16)
         depth_o3d = o3d.geometry.Image(depth_mm)
 
-        # 空彩色图（无纹理）
-        color_o3d = o3d.geometry.Image(np.zeros((h, w, 3), dtype=np.uint8))
+        # 解码 RGB 图作为颜色
+        color_o3d = None
+        try:
+            import cv2
+            img_bytes = base64.b64decode(f.image)
+            img_arr = np.frombuffer(img_bytes, dtype=np.uint8)
+            bgr = cv2.imdecode(img_arr, cv2.IMREAD_COLOR)
+            if bgr is not None:
+                if bgr.shape[:2] != (h, w):
+                    bgr = cv2.resize(bgr, (w, h))
+                color_o3d = o3d.geometry.Image(cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB).astype(np.uint8))
+        except Exception:
+            pass
+        if color_o3d is None:
+            color_o3d = o3d.geometry.Image(np.zeros((h, w, 3), dtype=np.uint8))
 
         rgbd = o3d.geometry.RGBDImage.create_from_color_and_depth(
             color_o3d, depth_o3d,
@@ -153,6 +166,10 @@ def reconstruct_tsdf(frames, positions, config: dict) -> dict | None:
     verts = np.asarray(mesh.vertices, dtype=np.float32)
     faces = np.asarray(mesh.triangles, dtype=np.int32)
 
+    vc: list = []
+    if mesh.has_vertex_colors():
+        vc = (np.clip(np.asarray(mesh.vertex_colors), 0, 1) * 255).astype(np.uint8).ravel().tolist()
+
     output_dir = config.get('output', {}).get('point_cloud_dir', 'output')
     os.makedirs(output_dir, exist_ok=True)
     fname = f"tsdf_{time.time():.0f}.ply"
@@ -160,8 +177,10 @@ def reconstruct_tsdf(frames, positions, config: dict) -> dict | None:
     o3d.io.write_triangle_mesh(fpath, mesh)
     url = f"/{output_dir}/{fname}"
 
-    logger.info("TSDF 重建完成: %d 帧积分, %d verts, %d faces → %s",
-                integrated, len(verts), len(faces), url)
+    logger.info("TSDF 重建完成: %d 帧积分, %d verts, %d faces, %s → %s",
+                integrated, len(verts), len(faces),
+                "有颜色" if vc else "无颜色",
+                url)
     return {
         "url": url,
         "mesh": {
@@ -169,6 +188,6 @@ def reconstruct_tsdf(frames, positions, config: dict) -> dict | None:
             "faces": faces.ravel().tolist(),
             "vertex_count": int(len(verts)),
             "face_count": int(len(faces)),
-            "vertex_colors": [],
+            "vertex_colors": vc,
         },
     }

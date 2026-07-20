@@ -51,7 +51,7 @@ import { resetReconstruction, getReconstructionStatus } from '@/api/reconstructi
 import { useConnectionStore } from '@/stores/connection'
 import { createSession } from '@/services/data-saver/data-saver'
 import type { Session } from '@/services/data-saver/data-saver'
-import { setRecordingHooks, setModelingActive } from '@/composables/useConnection'
+import { setRecordingHooks, setModelingActive, useConnection } from '@/composables/useConnection'
 import { saveReport as saveReportApi } from '@/api/report'
 import { useReconstructionWS, type MeshData } from '@/composables/useReconstructionWS'
 import { reconDefaults } from '@/config/defaults'
@@ -59,6 +59,7 @@ import type { Telemetry, Frame } from '@/types/data'
 import type { DetectionItem } from '@/types/api'
 
 const connStore = useConnectionStore()
+const { connectAll } = useConnection()
 
 const sceneRef = ref<InstanceType<typeof SceneView> | null>(null)
 const modeling = ref(false)
@@ -83,13 +84,30 @@ const onMeshData = (data: MeshData) => {
   sceneRef.value?.updateMesh(data)
 }
 const onCracks = (cracks: DetectionItem[]) => {
-  console.log('[onCracks] received:', cracks.length, 'defects')
-  if (cracks.length > 0) {
-    const d = cracks[0] as any
-    console.log('[onCracks] first defect keys:', Object.keys(d), 'has anno:', !!d.annotated_image, 'anno len:', d.annotated_image?.length)
-  }
   defects.value = cracks
   sceneRef.value?.updateCracks(cracks)
+
+  // 增量保存 metadata（3s 防抖）
+  if (saveReport.value && cracks.length > 0) {
+    const now = Date.now()
+    if (now - _lastMetaSave > 1000) {
+      _lastMetaSave = now
+      _saveMetaNow()
+    }
+  }
+}
+let _lastMetaSave = 0
+
+async function _saveMetaNow() {
+  const date = new Date().toISOString().slice(0, 10).replace(/-/g, '')
+  const task = taskName.value || '未命名'
+  const dirName = `report_${task}_${date}`
+  try {
+    await saveReportApi({
+      filename: `${dirName}.json`,
+      data: { task_name: task, date, point_cloud_url: pointCloudUrl.value, defects: defects.value },
+    })
+  } catch { /* ignore */ }
 }
 const onTrail = (trail: number[][]) => {
   sceneRef.value?.updateTrail(trail)
@@ -147,9 +165,12 @@ async function startModeling() {
     session = createSession()
     setRecordingHooks(
       (t: Telemetry) => { session?.recordTelemetry(t) },
-      (f: Frame) => { session?.recordFrame(f) },
+      (f: Frame) => { session?.recordFrame(f)?.catch(() => {}) },
     )
   }
+
+  // 确保车辆 WS 已连接
+  if (connStore.overall !== 'connected') connectAll()
 
   setModelingActive(true)
   modeling.value = true
@@ -171,7 +192,11 @@ async function stopModeling() {
 
   // 保存Session：完成录制
   if (session) {
-    await session.finalize()
+    try {
+      await session.finalize()
+    } catch (e) {
+      console.error('Session finalize 失败:', e)
+    }
     session = null
     setRecordingHooks(null, null)
   }

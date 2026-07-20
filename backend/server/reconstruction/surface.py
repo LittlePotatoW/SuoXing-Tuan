@@ -21,12 +21,16 @@ import numpy as np
 logger = logging.getLogger(__name__)
 
 
-def reconstruct_surface(points: np.ndarray, config: dict) -> str | None:
+def reconstruct_surface(points: np.ndarray, config: dict,
+                        colors: np.ndarray | None = None,
+                        color_ref: np.ndarray | None = None) -> str | None:
     """将点云转为三角网格并导出 PLY 文件
 
     Args:
-        points: (N, 3) 点云, 世界坐标系, 米
+        points: (N, 3) 点云, 世界坐标系, 米 (fused 几何)
         config: 项目配置
+        colors: (M, 3) uint8 RGB 颜色, 与 color_ref 对齐
+        color_ref: (M, 3) pre-fuse 点云 (点数 = len(colors)), 用于颜色传递
 
     Returns:
         mesh PLY 文件 URL 路径, 或 None (失败/点数不够/无 open3d)
@@ -54,7 +58,7 @@ def reconstruct_surface(points: np.ndarray, config: dict) -> str | None:
     logger.info("表面重建开始: %d 点, depth=%d, voxel=%.3f",
                 len(points), depth, voxel_size)
 
-    # 1. 创建 Open3D 点云
+    # 1. 创建 Open3D 点云 (仅几何，Poisson 重建用)
     pcd = o3d.geometry.PointCloud()
     pcd.points = o3d.utility.Vector3dVector(points.astype(np.float64))
 
@@ -87,6 +91,37 @@ def reconstruct_surface(points: np.ndarray, config: dict) -> str | None:
         threshold = np.quantile(densities, density_pct)
         mesh.remove_vertices_by_mask(densities < threshold)
 
+    # 6.5 颜色传递: 用 color_ref (pre-fuse) 的 KD 树 → mesh 顶点着色
+    has_color = (colors is not None and color_ref is not None
+                 and len(colors) == len(color_ref) and len(colors) > 0)
+    if has_color:
+        try:
+            # 用带颜色的 pre-fuse 点云做 KD 树参考
+            ref_pcd = o3d.geometry.PointCloud()
+            ref_pcd.points = o3d.utility.Vector3dVector(color_ref.astype(np.float64))
+            ref_pcd.colors = o3d.utility.Vector3dVector(colors.astype(np.float64) / 255.0)
+            ref_pcd = ref_pcd.voxel_down_sample(voxel_size=voxel_size * 2)  # 粗采样加速
+            pts_src = np.asarray(ref_pcd.points)
+            colors_src = np.asarray(ref_pcd.colors)
+            mesh_verts = np.asarray(mesh.vertices)
+            from scipy.spatial import KDTree
+            tree = KDTree(pts_src)
+            k = min(5, len(pts_src))
+            _, idx = tree.query(mesh_verts, k=k)
+            if k == 1:
+                mesh_colors = colors_src[idx]
+            else:
+                weights = 1.0 / (np.linalg.norm(mesh_verts[:, None, :] - pts_src[idx], axis=2) + 1e-8)
+                weights /= weights.sum(axis=1, keepdims=True)
+                mesh_colors = np.sum(colors_src[idx] * weights[:, :, None], axis=1)
+            mesh.vertex_colors = o3d.utility.Vector3dVector(mesh_colors)
+            logger.warning("[color] KD-tree done: mesh_colors min=%.3f max=%.3f mean=%.3f, first3=%s",
+                          mesh_colors.min(), mesh_colors.max(), mesh_colors.mean(),
+                          mesh_colors[:3].tolist() if len(mesh_colors) >= 3 else 'N/A')
+        except ImportError:
+            logger.warning("[color] scipy not installed, skip color transfer")
+            pass
+
     # 7. 导出 PLY (顶点 + 面)
     output_dir = config.get('output', {}).get('point_cloud_dir', 'output')
     os.makedirs(output_dir, exist_ok=True)
@@ -99,9 +134,19 @@ def reconstruct_surface(points: np.ndarray, config: dict) -> str | None:
     verts = np.asarray(mesh.vertices, dtype=np.float32)
     faces = np.asarray(mesh.triangles, dtype=np.int32)
 
+    vc: list = []
+    if mesh.has_vertex_colors():
+        vc_arr = (np.clip(np.asarray(mesh.vertex_colors), 0, 1) * 255).astype(np.uint8)
+        vc = vc_arr.ravel().tolist()
+        logger.warning("[color] output vc: len=%d, min=%d max=%d, first9=%s",
+                      len(vc), int(vc_arr.min()), int(vc_arr.max()),
+                      vc[:9] if len(vc) >= 9 else vc)
+
     elapsed = (time.perf_counter() - t0) * 1000
-    logger.info("表面重建完成: %d verts, %d faces, %.0fms → %s",
-                len(verts), len(faces), elapsed, url)
+    logger.info("表面重建完成: %d verts, %d faces, %s, %.0fms → %s",
+                len(verts), len(faces),
+                "有颜色" if vc else "无颜色",
+                elapsed, url)
     return {
         "url": url,
         "mesh": {
@@ -109,6 +154,6 @@ def reconstruct_surface(points: np.ndarray, config: dict) -> str | None:
             "faces": faces.ravel().tolist(),
             "vertex_count": int(len(verts)),
             "face_count": int(len(faces)),
-            "vertex_colors": [],
+            "vertex_colors": vc,
         },
     }

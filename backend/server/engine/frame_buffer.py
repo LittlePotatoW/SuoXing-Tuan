@@ -23,6 +23,7 @@ class FrameEntry:
     image: str
     depth_map: str
     point_cloud: np.ndarray | None = None      # Poisson 用 (N,3)
+    point_colors: np.ndarray | None = None      # (N,3) uint8 RGB
     depth_m: np.ndarray | None = None           # TSDF 用 (H,W) float32 深度米
     detections: list = field(default_factory=list)
     annotated_image: str = ''

@@ -11,7 +11,7 @@
 //   监听 settings.telemetry / settings.frame 变化自动重连
 // ============================================================
 
-import { onUnmounted, watch } from 'vue'
+import { onUnmounted, watch, shallowRef } from 'vue'
 import { createWSClient } from '@/network/websocket-client'
 import { parseTelemetry, parseFrame } from '@/services/pack-unpack/parse'
 import { useSettingsStore } from '@/stores/settings'
@@ -27,6 +27,7 @@ let onTelemetry: ((t: Telemetry) => void) | null = null
 let onFrame: ((f: Frame) => void) | null = null
 let watchersSetup = false
 let modelingActive = false
+const latestFrame = shallowRef<Frame | null>(null)
 
 export function setRecordingHooks(
   telemetryHook: ((t: Telemetry) => void) | null,
@@ -39,6 +40,11 @@ export function setRecordingHooks(
 /** 控制是否将数据转发到后端进行重建（实时建模页面控制） */
 export function setModelingActive(active: boolean) {
   modelingActive = active
+}
+
+/** 获取最新帧数据（供主界面图像预览使用） */
+export function useLatestFrame() {
+  return latestFrame
 }
 
 function buildURL(source: { host: string; port: number }) {
@@ -70,6 +76,7 @@ export function useConnection() {
     frameWS.onMessage((raw) => {
       try {
         const data = parseFrame(raw)
+        latestFrame.value = data
         onFrame?.(data)
         if (modelingActive) postFrame(data).catch(() => {})
       } catch { /* ignore malformed */ }

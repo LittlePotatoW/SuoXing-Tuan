@@ -22,7 +22,7 @@ from pathlib import Path
 import numpy as np
 
 from server.engine.frame_buffer import FrameBuffer, FrameEntry
-from server.pointcloud import decode_depth
+from server.pointcloud import decode_depth, sample_colors
 
 # 标注图实时保存目录
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent
@@ -185,11 +185,21 @@ class ReconstructionEngine:
             except Exception:
                 logger.exception("center_3d 坐标变换失败")
 
+        # 2.6 从 RGB 图采样颜色（与点云对齐）
+        pc_colors = None
+        if pc is not None and len(pc) > 0:
+            pc_colors = sample_colors(image, depth_m)
+            if pc_colors is not None:
+                logger.warning("[color] frame=%s sampled %d colors for %d points", frame_id, len(pc_colors), len(pc))
+            else:
+                logger.warning("[color] frame=%s sample_colors returned None (pc=%d)", frame_id, len(pc))
+
         # 3. 存 buffer（带预计算点云和检测结果）
         entry = FrameEntry(
             frame_id=frame_id, timestamp=timestamp,
             image=image, depth_map=depth_map,
             point_cloud=pc if self._method != 'tsdf' else None,
+            point_colors=pc_colors,
             depth_m=depth_m if self._method == 'tsdf' else None,
             detections=dets,
             annotated_image=anno_img,
@@ -286,17 +296,20 @@ class ReconstructionEngine:
             is_tsdf = (self._method == 'tsdf')
 
             if is_tsdf:
-                # TSDF: 跳过 point_cloud / map_frames / fuse
                 result_pc = None
+                result_colors = None
             else:
-                # Poisson: 收集点云 → 世界坐标拼接 → 融合
+                # Poisson: 收集点云+颜色 → 世界坐标拼接 → 融合
                 point_clouds = []
+                color_blocks = []
                 raw_points = 0
                 for f in frames:
                     pc = f.point_cloud
                     if pc is not None and len(pc) > 0:
                         raw_points += len(pc)
                         point_clouds.append(pc)
+                        if f.point_colors is not None and len(f.point_colors) == len(pc):
+                            color_blocks.append(f.point_colors)
                 if not point_clouds:
                     logger.warning("无有效点云，跳过此次重建")
                     return
@@ -306,8 +319,15 @@ class ReconstructionEngine:
                     for i in range(len(point_clouds)):
                         if len(point_clouds[i]) > 0:
                             point_clouds[i] = point_clouds[i][::keep]
+                    for i in range(len(color_blocks)):
+                        if len(color_blocks[i]) > 0:
+                            color_blocks[i] = color_blocks[i][::keep]
                     logger.warning("compact: %d → ~%d 点", raw_points, raw_points // keep)
                 merged = map_frames(point_clouds, positions, config)
+                result_colors = np.vstack(color_blocks) if color_blocks else None
+                logger.warning("[color] _trigger: %d frames, %d color blocks, result_colors=%s",
+                           len(point_clouds), len(color_blocks),
+                           result_colors.shape if result_colors is not None else None)
                 if merged is None:
                     return
                 previous = (self._latest_result.point_cloud
@@ -356,16 +376,27 @@ class ReconstructionEngine:
                 if surface_cfg.get('enabled', False):
                     try:
                         from server.reconstruction import reconstruct_surface
-                        surface_result = reconstruct_surface(result_pc, config)
+                        # result_pc: fused 几何 (点数可能与颜色不匹配)
+                        # merged:   pre-fuse 点云, 与 result_colors 对齐
+                        surface_result = reconstruct_surface(
+                            result_pc, config,
+                            colors=result_colors, color_ref=merged,
+                        )
                     except Exception:
                         logger.exception("表面重建失败，回退到点云")
 
             if surface_result:
                 pc_url = surface_result["url"]
                 mesh_data = surface_result["mesh"]
+                logger.warning("[color] surface_result mesh: vc=%s",
+                           'YES' if mesh_data.get('vertex_colors') else 'EMPTY')
             elif result_pc is not None:
                 pc_url = _save_pointcloud(result_pc, config)
-                mesh_data = _build_pointcloud_data(result_pc)
+                mesh_data = _build_pointcloud_data(result_pc, result_colors)
+                logger.warning("[color] fallback pointcloud: vc=%s, pc=%d, colors=%s",
+                           'YES' if mesh_data.get('vertex_colors') else 'EMPTY',
+                           len(result_pc),
+                           result_colors.shape if result_colors is not None else None)
             else:
                 logger.warning("重建失败: 无 mesh 无点云")
                 return
@@ -412,15 +443,18 @@ def _save_pointcloud(pc: np.ndarray, config: dict) -> str | None:
     return f"/{output_dir}/{filename}"
 
 
-def _build_pointcloud_data(pc: np.ndarray) -> dict:
+def _build_pointcloud_data(pc: np.ndarray, colors: np.ndarray | None = None) -> dict:
     """从点云构建 mesh_data dict（用于 WebSocket 直接推送）"""
     verts = pc.astype(np.float32)
+    vc: list = []
+    if colors is not None and len(colors) == len(verts):
+        vc = colors.astype(np.uint8).ravel().tolist()
     return {
         "vertices": verts.ravel().tolist(),
         "faces": [],
         "vertex_count": int(len(verts)),
         "face_count": 0,
-        "vertex_colors": [],
+        "vertex_colors": vc,
     }
 
 

@@ -6,10 +6,24 @@
 import { httpClient } from '@/network/http-client'
 import type { SessionListItem } from '@/types/api'
 
-export async function saveSession(data: {
-  name: string; manifest: any; frames: { filename: string; data: string }[]
+export async function createSession(name: string, startTime: number, telemetryInterval = 100) {
+  const res = await httpClient.post('/api/session/create', {
+    name, start_time: startTime, telemetry_interval_ms: telemetryInterval,
+  }, { timeout: 10000 })
+  return res.data as { status: string; name: string }
+}
+
+export async function saveSessionFrame(data: {
+  session_name: string; frame_id: number
+  image_name: string; depth_name: string
+  image_data: string; depth_data: string
 }) {
-  const res = await httpClient.post('/api/session/save', data)
+  const res = await httpClient.post('/api/session/frame', data, { timeout: 30000 })
+  return res.data as { status: string; frame_id: number }
+}
+
+export async function saveSessionManifest(name: string, manifest: any) {
+  const res = await httpClient.post('/api/session/save', { name, manifest, frames: [] }, { timeout: 10000 })
   return res.data as { status: string; name: string; frame_count: number }
 }
 
@@ -23,7 +37,6 @@ export async function loadSessionManifest(name: string) {
   return res.data as any
 }
 
-/** 获取 session 帧文件的完整 URL */
 export function getSessionFileUrl(sessionName: string, filePath: string) {
   return `${httpClient.defaults.baseURL}/api/session/files/${sessionName}/${filePath}`
 }
