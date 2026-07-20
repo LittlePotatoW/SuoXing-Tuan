@@ -172,10 +172,17 @@ const testResult = ref<boolean | null>(null)
 
 async function testBackend() {
   testing.value = true; testResult.value = null
+  const url = `http://${addr.value.backend}:${port.value.backend}/api/vehicle/position`
+  console.log('[testBackend] testing:', url)
   try {
-    const resp = await fetch(`http://${addr.value.backend}:${port.value.backend}/api/vehicle/position`)
-    testResult.value = resp.ok
-  } catch { testResult.value = false }
+    const resp = await fetch(url, { cache: 'no-cache', signal: AbortSignal.timeout(3000) })
+    const ok = resp.ok
+    console.log('[testBackend] response:', resp.status, ok)
+    testResult.value = ok
+  } catch (e) {
+    console.warn('[testBackend] failed:', e)
+    testResult.value = false
+  }
   testing.value = false
 }
 </script>

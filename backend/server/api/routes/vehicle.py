@@ -11,9 +11,13 @@
 #   GET  /estimator/config   查询估计器配置
 # ============================================================
 
+import asyncio
+
 from fastapi import APIRouter
 
 import uuid
+
+_last_broadcast_ts = 0.0
 
 from server.api.schemas.vehicle import (
     TelemetryRequest, PositionResponse, FrameRequest,
@@ -50,18 +54,45 @@ def get_position() -> PositionResponse:
 
 
 @router.post("/frame", status_code=200)
-def post_frame(body: FrameRequest):
+async def post_frame(body: FrameRequest):
     """接收一帧深度相机数据 (RGB + 深度图), 推入重建引擎 + 位置估计器"""
     frame_id = uuid.uuid4().hex[:12]
 
-    # 位置估计器 (模式3/4 需要帧数据)
-    est = PositionEstimator.create()
-    est.update_frame(body.timestamp, body.image, body.depth_map)
+    def _proc():
+        # 位置估计器 (模式3/4 需要帧数据)
+        est = PositionEstimator.create()
+        est.update_frame(body.timestamp, body.image, body.depth_map)
 
-    # 重建引擎
-    from server.engine import ReconstructionEngine
-    engine = ReconstructionEngine.create()
-    engine.push_frame(frame_id, body.timestamp, body.image, body.depth_map)
+        # 重建引擎
+        from server.engine import ReconstructionEngine
+        engine = ReconstructionEngine.create()
+        engine.push_frame(frame_id, body.timestamp, body.image, body.depth_map)
+
+        # 检查是否有新的重建结果
+        result = engine.get_result()
+        return result
+
+    loop = asyncio.get_running_loop()
+    result = await loop.run_in_executor(None, _proc)
+
+    # 有新的重建结果 → 广播给所有 WebSocket 客户端
+    global _last_broadcast_ts
+    if result and result.get("timestamp") and result["timestamp"] != _last_broadcast_ts:
+        _last_broadcast_ts = result["timestamp"]
+        print(f"[WS] broadcast rebuild_complete, ts={result['timestamp']}, mesh={result.get('mesh_data') is not None}")
+        from server.api.routes.reconstruction import _broadcast
+        asyncio.create_task(_broadcast({
+            "type": "rebuild_complete",
+            "data": result,
+        }))
+    elif result and result.get("timestamp"):
+        pass  # 已广播过，跳过
+    else:
+        if result is not None and not result.get("timestamp"):
+            pass  # 无新结果
+        elif result is None:
+            pass  # 引擎尚未产出结果
+
     return {"status": "ok", "frame_id": frame_id}
 
 

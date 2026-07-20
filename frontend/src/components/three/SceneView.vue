@@ -14,7 +14,7 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted } from 'vue'
 import { SceneManager } from '@/services/renderer/three-scene'
-import { fetchAndParsePly, addToScene } from '@/services/renderer/point-cloud'
+import { addToScene, type MeshData } from '@/services/renderer/point-cloud'
 import { addCracks } from '@/services/renderer/annotations'
 import type { DetectionItem } from '@/types/api'
 
@@ -25,7 +25,6 @@ const crackCount = ref(0)
 
 let sceneMgr: SceneManager | null = null
 let resizeObs: ResizeObserver | null = null
-let plySeq = 0
 
 onMounted(() => {
   const canvas = canvasRef.value
@@ -54,17 +53,11 @@ onUnmounted(() => {
   sceneMgr = null
 })
 
-async function updatePointCloud(url: string): Promise<void> {
+function updateMesh(data: MeshData): void {
   if (!sceneMgr) return
-  const seq = ++plySeq
-  try {
-    console.log('[SceneView] loading PLY:', url)
-    const ply = await fetchAndParsePly(url)
-    if (seq !== plySeq) return
-    addToScene(ply, sceneMgr)
-    pointCount.value = ply.vertices.length / 3
-    console.log('[SceneView] done, pointCount:', pointCount.value)
-  } catch (e) { console.warn('[SceneView] PLY load failed:', e) }
+  console.log('[SceneView] updateMesh called, verts:', data.vertex_count, 'faces:', data.face_count)
+  addToScene(data, sceneMgr)
+  pointCount.value = data.vertex_count
 }
 
 function updateCracks(cracks: DetectionItem[]): void {
@@ -82,7 +75,7 @@ function resetScene(): void {
   crackCount.value = 0
 }
 
-defineExpose({ updatePointCloud, updateCracks, resetScene })
+defineExpose({ updateMesh, updateCracks, resetScene })
 </script>
 
 <style scoped>

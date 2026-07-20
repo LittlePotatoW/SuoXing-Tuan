@@ -1,16 +1,20 @@
 # ============================================================
 # backend/server/api/routes/reconstruction.py
-# 重建引擎接口：状态查询、结果获取
+# 重建引擎接口：状态查询、结果获取、WebSocket 推送
 #
 # 设计与用法:
 #   导出 router (APIRouter)
+#   导出 _broadcast(payload) — 向所有 WS 客户端广播
 #   GET  /status   重建进度查询
 #   GET  /result   重建结果获取 (支持 ?since=)
 #   POST /reset    重置重建引擎 + 改参数
 #   GET  /config   查询引擎配置
+#   WS   /ws       重建结果推送
 # ============================================================
 
-from fastapi import APIRouter, Query
+import asyncio
+
+from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
 
 from server.api.schemas.reconstruction import (
     ReconstructionStatusResponse, ReconstructionResultResponse,
@@ -18,6 +22,47 @@ from server.api.schemas.reconstruction import (
 )
 
 router = APIRouter(prefix="/api/reconstruction", tags=["reconstruction"])
+
+# WebSocket 连接管理
+_ws_clients: list[WebSocket] = []
+_ws_lock = asyncio.Lock()
+
+
+async def _broadcast(payload: dict) -> None:
+    """向所有 WebSocket 客户端广播消息"""
+    async with _ws_lock:
+        clients = list(_ws_clients)
+    dead: list[WebSocket] = []
+    for ws in clients:
+        try:
+            await ws.send_json(payload)
+        except Exception:
+            dead.append(ws)
+    if dead:
+        async with _ws_lock:
+            for ws in dead:
+                try:
+                    _ws_clients.remove(ws)
+                except ValueError:
+                    pass
+
+
+@router.websocket("/ws")
+async def ws_reconstruction(ws: WebSocket):
+    await ws.accept()
+    async with _ws_lock:
+        _ws_clients.append(ws)
+    try:
+        while True:
+            await ws.receive_text()
+    except (WebSocketDisconnect, Exception):
+        pass
+    finally:
+        async with _ws_lock:
+            try:
+                _ws_clients.remove(ws)
+            except ValueError:
+                pass
 
 
 @router.get("/status", response_model=ReconstructionStatusResponse)

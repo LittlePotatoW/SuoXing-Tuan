@@ -35,6 +35,7 @@ class _ReconstructionResult:
     point_cloud_url: str
     point_cloud: np.ndarray | None = None
     detections: list = field(default_factory=list)
+    mesh_data: dict | None = None  # { vertices, faces, vertex_count, face_count, vertex_colors }
 
 
 class ReconstructionEngine:
@@ -150,6 +151,7 @@ class ReconstructionEngine:
             "timestamp": self._latest_result.timestamp,
             "point_cloud_url": self._latest_result.point_cloud_url,
             "detections": self._latest_result.detections,
+            "mesh_data": self._latest_result.mesh_data,
         }
 
     # ============================================================
@@ -239,20 +241,30 @@ class ReconstructionEngine:
                     logger.exception("YOLO 检测管线异常")
 
             # 表面重建（可选，由 config 控制；失败自动回退到点云）
-            mesh_url = None
             surface_cfg = config.get('reconstruction', {}).get('surface', {})
+            surface_result = None
+            print(f"[ENGINE] surface enabled={surface_cfg.get('enabled', False)}, points={len(result_pc)}")
             if surface_cfg.get('enabled', False):
                 try:
                     from server.reconstruction import reconstruct_surface
-                    mesh_url = reconstruct_surface(result_pc, config)
+                    print(f"[ENGINE] calling reconstruct_surface...")
+                    surface_result = reconstruct_surface(result_pc, config)
+                    print(f"[ENGINE] reconstruct_surface returned: {surface_result is not None}")
                 except Exception:
                     logger.exception("表面重建失败，回退到点云模式")
+                    print(f"[ENGINE] reconstruct_surface EXCEPTION, fallback to point cloud")
 
-            # 导出文件（mesh PLY 或 点云 PLY）
-            pc_url = mesh_url or _save_pointcloud(result_pc, config)
+            if surface_result:
+                print(f"[ENGINE] using mesh: {surface_result['mesh']['vertex_count']} verts, {surface_result['mesh']['face_count']} faces")
+                pc_url = surface_result["url"]
+                mesh_data = surface_result["mesh"]
+            else:
+                print(f"[ENGINE] using point cloud (surface disabled or failed)")
+                pc_url = _save_pointcloud(result_pc, config)
+                mesh_data = _build_pointcloud_data(result_pc)
 
             elapsed = (time.perf_counter() - t0) * 1000
-            output_type = "mesh" if mesh_url else "point-cloud"
+            output_type = "mesh" if surface_result else "point-cloud"
             logger.info(
                 "=== 重建完成 (%.0fms) ===\n"
                 "  帧数: %d (成功), subsample=%d, 模式=%s\n"
@@ -270,6 +282,7 @@ class ReconstructionEngine:
                 point_cloud_url=pc_url or "",
                 point_cloud=result_pc,  # 增量模式下次用
                 detections=detections,
+                mesh_data=mesh_data,
             )
 
 
@@ -289,6 +302,18 @@ def _save_pointcloud(pc: np.ndarray, config: dict) -> str | None:
         logger.warning("Open3D PLY 写入失败, 回退到 ASCII")
         _write_ply_ascii(filepath, pc)
     return f"/{output_dir}/{filename}"
+
+
+def _build_pointcloud_data(pc: np.ndarray) -> dict:
+    """从点云构建 mesh_data dict（用于 WebSocket 直接推送）"""
+    verts = pc.astype(np.float32)
+    return {
+        "vertices": verts.ravel().tolist(),
+        "faces": [],
+        "vertex_count": int(len(verts)),
+        "face_count": 0,
+        "vertex_colors": [],
+    }
 
 
 def _write_ply_ascii(filepath: str, pc: np.ndarray) -> None:

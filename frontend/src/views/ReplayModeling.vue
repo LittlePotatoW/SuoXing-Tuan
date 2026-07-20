@@ -25,7 +25,7 @@
         <table class="defect-table">
           <thead><tr><th>ID</th><th>类型</th><th>置信度</th><th>位置</th></tr></thead>
           <tbody>
-            <tr v-for="(d, idx) in defects" :key="d.id ?? idx" @click="selected = d"
+            <tr v-for="d in defects" :key="d.id" @click="selected = d"
               :class="{ selected: selected?.id === d.id }">
               <td>{{ d.id }}</td>
               <td>{{ d.class_name }}</td>
@@ -46,13 +46,14 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, onMounted } from 'vue'
 import SceneView from '@/components/three/SceneView.vue'
-import { resetReconstruction, getReconstructionResult } from '@/api/reconstruction'
+import { resetReconstruction } from '@/api/reconstruction'
 import { resetEstimator, postTelemetry, postFrame } from '@/api/vehicle'
 import { loadSession } from '@/services/data-loader/local-loader'
 import type { Session } from '@/services/data-loader/local-loader'
 import { listSessions } from '@/api/session'
+import { useReconstructionWS, type MeshData } from '@/composables/useReconstructionWS'
 import { reconDefaults } from '@/config/defaults'
 import type { DetectionItem } from '@/types/api'
 
@@ -65,7 +66,16 @@ const totalFrames = ref(0)
 const selected = ref<DetectionItem | null>(null)
 const defects = ref<DetectionItem[]>([])
 
-let pollTimer: ReturnType<typeof setInterval> | null = null
+// WebSocket 驱动重建结果接收
+const onMeshData = (data: MeshData) => {
+  sceneRef.value?.updateMesh(data)
+}
+const onCracks = (cracks: DetectionItem[]) => {
+  defects.value = cracks
+  sceneRef.value?.updateCracks(cracks)
+}
+const { connect: wsConnect, disconnect: wsDisconnect } =
+  useReconstructionWS(onMeshData, onCracks)
 
 async function fetchSessions() {
   try {
@@ -75,10 +85,6 @@ async function fetchSessions() {
 }
 
 onMounted(() => { fetchSessions() })
-
-function stopPolling() {
-  if (pollTimer) { clearInterval(pollTimer); pollTimer = null }
-}
 
 async function startReplay() {
   if (!selectedSession.value) return
@@ -95,7 +101,6 @@ async function startReplay() {
   totalFrames.value = session.frames.length
   defects.value = []
   selected.value = null
-  sceneRef.value?.resetScene()
 
   try {
     await resetReconstruction({
@@ -104,7 +109,9 @@ async function startReplay() {
     await resetEstimator({ mode: 'bicycle' })
   } catch (e) { console.warn('reset reconstruction failed:', e) }
 
-  // 先发数据，再开始轮询
+  // 先连 WebSocket 再发数据，避免漏掉早期的 rebuild_complete
+  wsConnect()
+
   for (const t of session.telemetryList) {
     try { await postTelemetry(t) } catch { /* ignore */ }
   }
@@ -116,27 +123,8 @@ async function startReplay() {
       sentFrames.value++
     } catch { /* ignore */ }
   }
-
-  stopPolling()
-  let lastTs = 0
-  pollTimer = setInterval(async () => {
-    try {
-      const result = await getReconstructionResult(lastTs || undefined)
-      if (result.timestamp > 0) {
-        lastTs = result.timestamp
-        if (result.point_cloud_url) {
-          sceneRef.value?.updatePointCloud(result.point_cloud_url)
-        }
-        if (result.detections && result.detections.length > 0) {
-          defects.value = result.detections
-          sceneRef.value?.updateCracks(result.detections)
-        }
-      }
-    } catch { /* no result yet */ }
-  }, 2000)
 }
 
-onUnmounted(() => { stopPolling() })
 </script>
 
 <style scoped>

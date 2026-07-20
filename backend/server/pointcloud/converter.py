@@ -80,4 +80,7 @@ def depth_to_pointcloud(depth_b64: str, subsample: int = 1) -> np.ndarray | None
     x = (u_real - cx) * z / fx
     y = (v_real - cy) * z / fy
 
-    return np.column_stack([x, y, z]).astype(np.float32)
+    result = np.column_stack([x, y, z]).astype(np.float32)
+    # 过滤 NaN / Inf（深度图边缘等异常值）
+    result = result[np.isfinite(result).all(axis=1)]
+    return result

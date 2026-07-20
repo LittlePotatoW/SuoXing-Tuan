@@ -45,14 +45,15 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onUnmounted } from 'vue'
+import { ref, computed, onUnmounted, watch } from 'vue'
 import SceneView from '@/components/three/SceneView.vue'
-import { resetReconstruction, getReconstructionResult, getReconstructionStatus } from '@/api/reconstruction'
+import { resetReconstruction, getReconstructionStatus } from '@/api/reconstruction'
 import { useConnectionStore } from '@/stores/connection'
 import { createSession } from '@/services/data-saver/data-saver'
 import type { Session } from '@/services/data-saver/data-saver'
 import { setRecordingHooks } from '@/composables/useConnection'
 import { saveReport as saveReportApi } from '@/api/report'
+import { useReconstructionWS, type MeshData } from '@/composables/useReconstructionWS'
 import { reconDefaults } from '@/config/defaults'
 import type { Telemetry, Frame } from '@/types/data'
 import type { DetectionItem } from '@/types/api'
@@ -73,33 +74,49 @@ const frameThreshold = ref(30)
 const defects = ref<DetectionItem[]>([])
 const pointCloudUrl = ref('')
 
-let pollTimer: ReturnType<typeof setInterval> | null = null
 let session: Session | null = null
-let lastUrl = ''
+let statusTimer: ReturnType<typeof setInterval> | null = null
+let fallbackTimer: ReturnType<typeof setInterval> | null = null
 
-async function poll() {
+// WebSocket 驱动的重建结果接收
+const onMeshData = (data: MeshData) => {
+  sceneRef.value?.updateMesh(data)
+}
+const onCracks = (cracks: DetectionItem[]) => {
+  defects.value = cracks
+  sceneRef.value?.updateCracks(cracks)
+}
+const { connected: wsConnected, connect: wsConnect, disconnect: wsDisconnect } =
+  useReconstructionWS(onMeshData, onCracks)
+
+// WS 断开 5 秒后启动 HTTP 轮询降级
+watch(wsConnected, (v) => {
+  if (v) {
+    if (fallbackTimer) { clearInterval(fallbackTimer); fallbackTimer = null }
+  } else if (modeling.value) {
+    if (!fallbackTimer) {
+      fallbackTimer = setInterval(fallbackPoll, 3000)
+    }
+  }
+})
+
+async function fallbackPoll() {
+  try {
+    const r = await getReconstructionStatus()
+    frameCount.value = r.frame_count
+    frameThreshold.value = r.frame_threshold
+  } catch { /* ignore */ }
+}
+
+async function pollStatus() {
   try {
     const st = await getReconstructionStatus()
     frameCount.value = st.frame_count
     frameThreshold.value = st.frame_threshold
   } catch { /* backend unreachable */ }
-
-  try {
-    const result = await getReconstructionResult()
-    if (result.timestamp > 0 && result.point_cloud_url && result.point_cloud_url !== lastUrl) {
-      lastUrl = result.point_cloud_url
-      pointCloudUrl.value = result.point_cloud_url
-      await sceneRef.value?.updatePointCloud(result.point_cloud_url)
-    }
-    if (result.detections && result.detections.length > 0) {
-      defects.value = result.detections
-      sceneRef.value?.updateCracks(result.detections)
-    }
-  } catch { /* no new result */ }
 }
 
 async function startModeling() {
-  // 开始建模时把开关传给后端
   try {
     await resetReconstruction({
       mode: reconDefaults.mode,
@@ -109,7 +126,6 @@ async function startModeling() {
     })
   } catch { /* backend unreachable */ }
 
-  // 保存Session：创建录制
   if (saveSession.value) {
     session = createSession()
     setRecordingHooks(
@@ -123,14 +139,16 @@ async function startModeling() {
   defects.value = []
   pointCloudUrl.value = ''
   selected.value = null
-  // 首次 poll 会自然替换空场景，不提前 resetScene 避免闪白
-  poll()
-  pollTimer = setInterval(poll, 2000)
+
+  wsConnect()
+  statusTimer = setInterval(pollStatus, 2000)
 }
 
 async function stopModeling() {
   modeling.value = false
-  if (pollTimer) { clearInterval(pollTimer); pollTimer = null }
+  if (statusTimer) { clearInterval(statusTimer); statusTimer = null }
+  if (fallbackTimer) { clearInterval(fallbackTimer); fallbackTimer = null }
+  wsDisconnect()
 
   // 保存Session：完成录制
   if (session) {
@@ -153,7 +171,9 @@ async function stopModeling() {
 }
 
 onUnmounted(() => {
-  if (pollTimer) { clearInterval(pollTimer); pollTimer = null }
+  if (statusTimer) { clearInterval(statusTimer); statusTimer = null }
+  if (fallbackTimer) { clearInterval(fallbackTimer); fallbackTimer = null }
+  wsDisconnect()
   if (session) { session.cancel(); session = null }
 })
 </script>

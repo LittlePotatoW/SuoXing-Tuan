@@ -11,7 +11,6 @@
 import os
 import sys
 import argparse
-import subprocess
 from pathlib import Path
 
 import yaml
@@ -38,17 +37,12 @@ def main():
     args = parser.parse_args()
 
     os.chdir(str(backend_dir))
-
-    cmd = [sys.executable, "-m", "uvicorn", "server.main:app",
-           "--host", args.host, "--port", str(args.port)]
-    if args.reload:
-        cmd.append("--reload")
+    sys.path.insert(0, str(backend_dir))
 
     print(f"启动后端: http://{args.host}:{args.port}")
     print(f"API 文档: http://{args.host}:{args.port}/docs")
-
-    # 后台启动 uvicorn，不阻塞当前终端
-    subprocess.Popen(cmd, creationflags=subprocess.CREATE_NEW_CONSOLE)
+    import uvicorn
+    uvicorn.run("server.main:app", host=args.host, port=args.port, reload=args.reload)
 
 
 if __name__ == "__main__":

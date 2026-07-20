@@ -96,7 +96,19 @@ def reconstruct_surface(points: np.ndarray, config: dict) -> str | None:
     o3d.io.write_triangle_mesh(filepath, mesh)
     url = f"/{output_dir}/{filename}"
 
+    verts = np.asarray(mesh.vertices, dtype=np.float32)
+    faces = np.asarray(mesh.triangles, dtype=np.int32)
+
     elapsed = (time.perf_counter() - t0) * 1000
     logger.info("表面重建完成: %d verts, %d faces, %.0fms → %s",
-                len(mesh.vertices), len(mesh.triangles), elapsed, url)
-    return url
+                len(verts), len(faces), elapsed, url)
+    return {
+        "url": url,
+        "mesh": {
+            "vertices": verts.ravel().tolist(),
+            "faces": faces.ravel().tolist(),
+            "vertex_count": int(len(verts)),
+            "face_count": int(len(faces)),
+            "vertex_colors": [],
+        },
+    }
