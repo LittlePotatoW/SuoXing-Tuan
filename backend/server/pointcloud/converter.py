@@ -19,11 +19,12 @@ import numpy as np
 logger = logging.getLogger(__name__)
 
 
-def depth_to_pointcloud(depth_b64: str) -> np.ndarray | None:
+def depth_to_pointcloud(depth_b64: str, subsample: int = 1) -> np.ndarray | None:
     """将 base64 深度图转为 N×3 点云（相机坐标系）
 
     Args:
-        depth_b64: base64 编码的 16-bit PNG 深度图, 像素值 = 深度 mm
+        depth_b64:  base64 编码的 16-bit PNG 深度图, 像素值 = 深度 mm
+        subsample: 采样步长, 1=每像素, 2=每2x2取1点, 3=每3x3取1点
 
     Returns:
         (N, 3) float32 点云, 单位为米; 解析失败返回 None
@@ -62,13 +63,21 @@ def depth_to_pointcloud(depth_b64: str) -> np.ndarray | None:
         logger.warning("深度相机内参未配置, 无法生成点云")
         return None
 
+    # 深度图降采样
+    if subsample > 1:
+        depth_img = depth_img[::subsample, ::subsample]
+
     depth_m = depth_img.astype(np.float32) / depth_scale
 
     mask = (depth_m > min_depth) & (depth_m < max_depth)
     v, u = np.where(mask)
     z = depth_m[v, u]
 
-    x = (u - cx) * z / fx
-    y = (v - cy) * z / fy
+    # 还原原始像素坐标（采样后的 u,v 需要乘回步长）
+    u_real = u * subsample
+    v_real = v * subsample
+
+    x = (u_real - cx) * z / fx
+    y = (v_real - cy) * z / fy
 
     return np.column_stack([x, y, z]).astype(np.float32)

@@ -49,11 +49,7 @@ const selected = ref<any>(null)
 const note = ref('')
 const selectedReport = ref('')
 const reports = ref<string[]>([])
-const defects = ref<any[]>([
-  { id: 1, type: '裂缝', conf: 0.93, pos: '10.5, 2.1, -3.0' },
-  { id: 2, type: '渗水', conf: 0.87, pos: '12.1, 1.8, -2.5' },
-  { id: 3, type: '裂缝', conf: 0.76, pos: '14.0, 1.5, -2.0' },
-])
+const defects = ref<any[]>([])
 
 async function fetchReports() {
   try {

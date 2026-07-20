@@ -47,8 +47,9 @@ function syncSize(): void {
   const canvas = canvasRef.value
   const container = containerRef.value
   if (!canvas || !container) return
-  const w = container.clientWidth
-  const h = container.clientHeight
+  const dpr = window.devicePixelRatio || 1
+  const w = Math.round(container.clientWidth * dpr)
+  const h = Math.round(container.clientHeight * dpr)
   if (canvas.width !== w || canvas.height !== h) {
     canvas.width = w
     canvas.height = h
@@ -62,8 +63,11 @@ function drawGrayscale(flatArr: number[]): void {
   const ctx = canvas.getContext('2d')
   if (!ctx) return
 
-  const W = canvas.width
-  const H = canvas.height
+  const dpr = window.devicePixelRatio || 1
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+
+  const W = Math.round(canvas.width / dpr)
+  const H = Math.round(canvas.height / dpr)
   const N = flatArr.length / 3
   const pad = 4
 

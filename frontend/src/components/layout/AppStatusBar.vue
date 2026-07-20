@@ -52,7 +52,7 @@ const showScan = ref(false)
 const selectedIP = ref('')
 const mockDevices = ref<{ ip: string }[]>([])
 
-watch(() => connStore.overall, (v) => { connected.value = v === 'connected' })
+watch(() => connStore.overall, (v) => { connected.value = v === 'connected' }, { immediate: true })
 watch(connected, (v) => { v ? connectAll() : disconnectAll() })
 watch(showScan, (v) => { if (v) scan().then(() => { mockDevices.value = devices.value }) })
 watch(selectedIP, (ip) => { if (ip) settings.applyDevice({ ip, telemetry: true, frame: true }) })

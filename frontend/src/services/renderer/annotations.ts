@@ -27,6 +27,8 @@ const DEFAULT_COLOR = 0xffa726
 const SPHERE_SIZE = 0.04
 const SPHERE_SEGMENTS = 8
 
+let _lastCrackHash = ''
+
 /**
  * 添加缺陷标注球体
  *
@@ -37,6 +39,11 @@ export function addCracks(
   cracks: DetectionItem[],
   sceneMgr: SceneManager,
 ): void {
+  // 数据未变则跳过，避免每轮轮询裂缝球闪烁
+  const hash = JSON.stringify(cracks.map(c => [c.id, c.class_name, c.confidence, c.center_3d]))
+  if (hash === _lastCrackHash) return
+  _lastCrackHash = hash
+
   clearCracks(sceneMgr)
   if (!cracks || cracks.length === 0) return
 

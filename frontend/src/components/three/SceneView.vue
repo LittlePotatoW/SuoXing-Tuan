@@ -25,6 +25,7 @@ const crackCount = ref(0)
 
 let sceneMgr: SceneManager | null = null
 let resizeObs: ResizeObserver | null = null
+let plySeq = 0
 
 onMounted(() => {
   const canvas = canvasRef.value
@@ -55,11 +56,15 @@ onUnmounted(() => {
 
 async function updatePointCloud(url: string): Promise<void> {
   if (!sceneMgr) return
+  const seq = ++plySeq
   try {
+    console.log('[SceneView] loading PLY:', url)
     const ply = await fetchAndParsePly(url)
+    if (seq !== plySeq) return
     addToScene(ply, sceneMgr)
     pointCount.value = ply.vertices.length / 3
-  } catch { /* fetch/parse failed */ }
+    console.log('[SceneView] done, pointCount:', pointCount.value)
+  } catch (e) { console.warn('[SceneView] PLY load failed:', e) }
 }
 
 function updateCracks(cracks: DetectionItem[]): void {

@@ -75,6 +75,7 @@ function onFileInputChange(e: Event) {
 }
 
 async function onFileSelected(file: File) {
+  if (previewUrl.value) URL.revokeObjectURL(previewUrl.value)
   previewUrl.value = URL.createObjectURL(file)
   imageBase64.value = await fileToBase64(file)
   detected.value = false

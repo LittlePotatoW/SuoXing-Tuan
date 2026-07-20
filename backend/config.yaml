@@ -46,6 +46,7 @@ depth:
   min_depth: 0.6                # 最小有效深度 (m), Astra Pro 盲区
   max_depth: 8.0                # 最大有效深度 (m)
   depth_scale: 1000             # 深度值转换系数, 原始值 / scale = 米
+  subsample: 4                  # 深度图采样步长, 1=每像素, 2=每2x2取1点(点数1/4), 3=每3x3取1点(1/9)
 
 # -------------------------------------------
 # 深度相机 → 小车 外参（安装位姿）
@@ -63,7 +64,7 @@ camera_to_vehicle:
 reconstruction:
   mode: "incremental"           # "full" 全量重建 / "incremental" 增量重建
   frame_threshold: 30           # 累积多少帧触发一次重建
-  voxel_size: 0.05              # 点云降采样体素大小 (m)
+  voxel_size: 0.10              # 点云降采样体素大小 (m)
   surface:
     enabled: true              # 开启 Poisson 表面重建 (需 open3d)
     poisson_depth: 8            # 6~10, 越高越精细, 计算量指数增长

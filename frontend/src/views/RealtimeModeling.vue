@@ -29,7 +29,7 @@
         <table class="defect-table">
           <thead><tr><th>ID</th><th>类型</th><th>置信度</th><th>位置</th></tr></thead>
           <tbody>
-            <tr v-for="d in defects" :key="d.id" @click="selected = d"
+            <tr v-for="(d, idx) in defects" :key="d.id ?? idx" @click="selected = d"
               :class="{ selected: selected?.id === d.id }">
               <td>{{ d.id }}</td>
               <td>{{ d.class_name }}</td>
@@ -53,6 +53,7 @@ import { createSession } from '@/services/data-saver/data-saver'
 import type { Session } from '@/services/data-saver/data-saver'
 import { setRecordingHooks } from '@/composables/useConnection'
 import { saveReport as saveReportApi } from '@/api/report'
+import { reconDefaults } from '@/config/defaults'
 import type { Telemetry, Frame } from '@/types/data'
 import type { DetectionItem } from '@/types/api'
 
@@ -74,6 +75,7 @@ const pointCloudUrl = ref('')
 
 let pollTimer: ReturnType<typeof setInterval> | null = null
 let session: Session | null = null
+let lastUrl = ''
 
 async function poll() {
   try {
@@ -84,9 +86,10 @@ async function poll() {
 
   try {
     const result = await getReconstructionResult()
-    if (result.timestamp > 0 && result.point_cloud_url) {
+    if (result.timestamp > 0 && result.point_cloud_url && result.point_cloud_url !== lastUrl) {
+      lastUrl = result.point_cloud_url
       pointCloudUrl.value = result.point_cloud_url
-      sceneRef.value?.updatePointCloud(result.point_cloud_url)
+      await sceneRef.value?.updatePointCloud(result.point_cloud_url)
     }
     if (result.detections && result.detections.length > 0) {
       defects.value = result.detections
@@ -99,9 +102,9 @@ async function startModeling() {
   // 开始建模时把开关传给后端
   try {
     await resetReconstruction({
-      mode: 'incremental',
-      frame_threshold: 30,
-      voxel_size: 0.01,
+      mode: reconDefaults.mode,
+      frame_threshold: reconDefaults.frame_threshold,
+      voxel_size: reconDefaults.voxel_size,
       yolo_enabled: yoloOn.value,
     })
   } catch { /* backend unreachable */ }
@@ -120,7 +123,7 @@ async function startModeling() {
   defects.value = []
   pointCloudUrl.value = ''
   selected.value = null
-  sceneRef.value?.resetScene()
+  // 首次 poll 会自然替换空场景，不提前 resetScene 避免闪白
   poll()
   pollTimer = setInterval(poll, 2000)
 }

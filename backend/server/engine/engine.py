@@ -144,7 +144,7 @@ class ReconstructionEngine:
         """获取最新重建结果。since 为增量查询时间戳"""
         if self._latest_result is None:
             return None
-        if since is not None and self._latest_result.timestamp <= since:
+        if since is not None and self._latest_result.timestamp < since:
             return None
         return {
             "timestamp": self._latest_result.timestamp,
@@ -170,7 +170,12 @@ class ReconstructionEngine:
             if not frames:
                 return
 
-            logger.info("trigger reconstruction, %d frames", len(frames))
+            t0 = time.perf_counter()
+            from server.config import get_config
+            config = get_config()
+
+            subsample = config.get('depth', {}).get('subsample', 1)
+            surface_enabled = config.get('reconstruction', {}).get('surface', {}).get('enabled', False)
 
             # 获取每帧的位置
             from server.estimation import PositionEstimator
@@ -179,11 +184,13 @@ class ReconstructionEngine:
             # 深度图 → 点云 + 查询位姿
             point_clouds = []
             positions = []
+            raw_points = 0
             for f in frames:
                 try:
-                    pc = depth_to_pointcloud(f.depth_map)
+                    pc = depth_to_pointcloud(f.depth_map, subsample=subsample)
                     if pc is not None and len(pc) > 0:
                         pos = estimator.get_position_at(f.timestamp)
+                        raw_points += len(pc)
                         point_clouds.append(pc)
                         positions.append({
                             'x': pos.x, 'y': pos.y,
@@ -197,13 +204,11 @@ class ReconstructionEngine:
                 return
 
             # 多帧点云 → 世界坐标拼接
-            from server.config import get_config
-            config = get_config()
             merged = map_frames(point_clouds, positions, config)
             if merged is None:
                 return
 
-            # 与历史结果融合(全量/增量 + 降采样)
+            # 与历史结果融合(全量/增量 + 降采样)，始终降采样避免点云无限膨胀
             previous = (self._latest_result.point_cloud
                         if self._latest_result else None)
             result_pc = fuse(merged, previous,
@@ -214,7 +219,7 @@ class ReconstructionEngine:
             detections = []
             if self._yolo_enabled:
                 try:
-                    from server.detection import Detector, apply_nms, map_to_3d
+                    from server.detection import Detector, apply_nms
                     detector = Detector.create()
                     if detector.available:
                         all_dets = []
@@ -226,19 +231,16 @@ class ReconstructionEngine:
                                 logger.exception("检测帧 %s 失败", f.frame_id)
                         if all_dets:
                             all_dets = apply_nms(all_dets)
-                            try:
-                                all_dets = map_to_3d(
-                                    all_dets, result_pc, None)
-                            except Exception:
-                                logger.exception("3D 映射失败")
+                            # TODO: 3D 映射需要有序点云 (H,W,3) + 深度图，
+                            # 当前 depth_to_pointcloud 返回无序 (N,3)，
+                            # 需重构点云数据流后再启用 map_to_3d
                         detections = all_dets
-                        logger.info("YOLO 检测完成: %d 个缺陷", len(detections))
                 except Exception:
                     logger.exception("YOLO 检测管线异常")
 
             # 表面重建（可选，由 config 控制；失败自动回退到点云）
-            surface_cfg = config.get('reconstruction', {}).get('surface', {})
             mesh_url = None
+            surface_cfg = config.get('reconstruction', {}).get('surface', {})
             if surface_cfg.get('enabled', False):
                 try:
                     from server.reconstruction import reconstruct_surface
@@ -249,8 +251,19 @@ class ReconstructionEngine:
             # 导出文件（mesh PLY 或 点云 PLY）
             pc_url = mesh_url or _save_pointcloud(result_pc, config)
 
-            logger.info("重建完成: %d 帧, %d 点 → %s",
-                         len(frames), len(result_pc), pc_url or "(内存)")
+            elapsed = (time.perf_counter() - t0) * 1000
+            output_type = "mesh" if mesh_url else "point-cloud"
+            logger.info(
+                "=== 重建完成 (%.0fms) ===\n"
+                "  帧数: %d (成功), subsample=%d, 模式=%s\n"
+                "  原始点云: %d 点 → 拼接: %d 点 → 降采样: %d 点\n"
+                "  输出类型: %s, YOLO缺陷: %d\n"
+                "  文件: %s",
+                elapsed, len(point_clouds), subsample, self._mode,
+                raw_points, len(merged), len(result_pc),
+                output_type, len(detections),
+                pc_url or "(内存)",
+            )
 
             self._latest_result = _ReconstructionResult(
                 timestamp=time.time(),
@@ -261,21 +274,25 @@ class ReconstructionEngine:
 
 
 def _save_pointcloud(pc: np.ndarray, config: dict) -> str | None:
-    """导出点云为 PLY 文件，返回 URL 路径"""
+    """导出点云为二进制 PLY 文件（通过 Open3D），返回 URL 路径"""
     output_dir = config.get('output', {}).get('point_cloud_dir', 'output')
     os.makedirs(output_dir, exist_ok=True)
     filename = f"recon_{time.time():.0f}.ply"
     filepath = os.path.join(output_dir, filename)
     try:
-        _write_ply(filepath, pc)
-        return f"/{output_dir}/{filename}"
+        import open3d as o3d
+        pcd = o3d.geometry.PointCloud()
+        pcd.points = o3d.utility.Vector3dVector(pc.astype(np.float64))
+        o3d.io.write_point_cloud(filepath, pcd, write_ascii=False)
+        logger.info("二进制 PLY 已保存: %s (%d 点)", filename, len(pc))
     except Exception:
-        logger.exception("保存点云文件失败")
-        return None
+        logger.warning("Open3D PLY 写入失败, 回退到 ASCII")
+        _write_ply_ascii(filepath, pc)
+    return f"/{output_dir}/{filename}"
 
 
-def _write_ply(filepath: str, pc: np.ndarray) -> None:
-    """写 ASCII PLY 文件"""
+def _write_ply_ascii(filepath: str, pc: np.ndarray) -> None:
+    """写 ASCII PLY 文件 (fallback)"""
     n = len(pc)
     with open(filepath, 'w') as f:
         f.write("ply\nformat ascii 1.0\n")

@@ -25,7 +25,7 @@
         <table class="defect-table">
           <thead><tr><th>ID</th><th>类型</th><th>置信度</th><th>位置</th></tr></thead>
           <tbody>
-            <tr v-for="d in defects" :key="d.id" @click="selected = d"
+            <tr v-for="(d, idx) in defects" :key="d.id ?? idx" @click="selected = d"
               :class="{ selected: selected?.id === d.id }">
               <td>{{ d.id }}</td>
               <td>{{ d.class_name }}</td>
@@ -104,7 +104,19 @@ async function startReplay() {
     await resetEstimator({ mode: 'bicycle' })
   } catch (e) { console.warn('reset reconstruction failed:', e) }
 
-  // 发送前就开始轮询
+  // 先发数据，再开始轮询
+  for (const t of session.telemetryList) {
+    try { await postTelemetry(t) } catch { /* ignore */ }
+  }
+
+  for (const fi of session.frames) {
+    try {
+      const frame = await session.readFrame(fi.id)
+      await postFrame(frame)
+      sentFrames.value++
+    } catch { /* ignore */ }
+  }
+
   stopPolling()
   let lastTs = 0
   pollTimer = setInterval(async () => {
@@ -122,18 +134,6 @@ async function startReplay() {
       }
     } catch { /* no result yet */ }
   }, 2000)
-
-  for (const t of session.telemetryList) {
-    try { await postTelemetry(t) } catch { /* ignore */ }
-  }
-
-  for (const fi of session.frames) {
-    try {
-      const frame = await session.readFrame(fi.id)
-      await postFrame(frame)
-    } catch { /* ignore */ }
-    sentFrames.value++
-  }
 }
 
 onUnmounted(() => { stopPolling() })
