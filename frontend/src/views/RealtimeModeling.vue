@@ -131,9 +131,12 @@ async function startModeling() {
   const date = new Date().toISOString().slice(0, 10).replace(/-/g, '')
   const reportDir = saveReport.value ? `report_${taskName.value || '未命名'}_${date}` : ''
   try {
+    let c: any = {}
+    try { c = JSON.parse(localStorage.getItem('suoxingtuan_recon_config') || '{}') } catch {}
     await resetReconstruction({
-      mode: reconDefaults.mode,
-      frame_threshold: reconDefaults.frame_threshold,
+      method: c.method || reconDefaults.method,
+      mode: c.mode || reconDefaults.mode,
+      frame_threshold: c.frame_threshold ?? reconDefaults.frame_threshold,
       voxel_size: reconDefaults.voxel_size,
       yolo_enabled: yoloOn.value,
       report_name: reportDir || null,

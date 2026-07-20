@@ -124,8 +124,13 @@ async function startReplay() {
   try {
     const date = new Date().toISOString().slice(0, 10).replace(/-/g, '')
     const reportDir = saveReport.value ? `report_${taskName.value || selectedSession.value || '未命名'}_${date}` : ''
+    let c: any = {}
+    try { c = JSON.parse(localStorage.getItem('suoxingtuan_recon_config') || '{}') } catch {}
     await resetReconstruction({
-      mode: reconDefaults.mode, frame_threshold: reconDefaults.frame_threshold, voxel_size: reconDefaults.voxel_size,
+      method: c.method || reconDefaults.method,
+      mode: c.mode || reconDefaults.mode,
+      frame_threshold: c.frame_threshold ?? reconDefaults.frame_threshold,
+      voxel_size: reconDefaults.voxel_size,
       yolo_enabled: yoloOn.value,
       report_name: reportDir || null,
     })

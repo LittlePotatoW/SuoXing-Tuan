@@ -22,9 +22,10 @@ class FrameEntry:
     timestamp: float
     image: str
     depth_map: str
-    point_cloud: np.ndarray | None = None
+    point_cloud: np.ndarray | None = None      # Poisson 用 (N,3)
+    depth_m: np.ndarray | None = None           # TSDF 用 (H,W) float32 深度米
     detections: list = field(default_factory=list)
-    annotated_image: str = ''  # YOLO 标注图 base64
+    annotated_image: str = ''
 
 
 class FrameBuffer:

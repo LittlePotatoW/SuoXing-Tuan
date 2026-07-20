@@ -65,8 +65,13 @@ reconstruction:
   mode: "incremental"           # "full" 全量重建 / "incremental" 增量重建
   frame_threshold: 30           # 累积多少帧触发一次重建
   voxel_size: 0.01              # 点云降采样体素大小 (m)
+  method: "poisson"              # "poisson" | "tsdf"
   max_points: 2000000            # 最大点数，超限自动降采样
   crack_dedup_radius: 0.3        # 缺陷 3D 去重半径 (m)
+  tsdf:
+    voxel_length: 0.05           # TSDF 体素分辨率 (m)
+    sdf_trunc: 0.30              # TSDF 截断距离 (m)
+    cam_rotate_deg: 0            # 相机 Z 轴旋转: 90=前→左, -90=前→右, 180=前→后
   surface:
     enabled: true              # 开启 Poisson 表面重建 (需 open3d)
     poisson_depth: 8            # 6~10, 越高越精细, 计算量指数增长

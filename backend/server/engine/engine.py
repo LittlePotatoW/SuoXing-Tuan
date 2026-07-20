@@ -66,6 +66,7 @@ class ReconstructionEngine:
                  mode: str | None = None,
                  frame_threshold: int | None = None,
                  voxel_size: float | None = None,
+                 method: str | None = None,
                  yolo_enabled: bool = True):
         recon_cfg = config.get('reconstruction', {})
         self._mode: str = mode or recon_cfg.get('mode', 'incremental')
@@ -75,6 +76,7 @@ class ReconstructionEngine:
         self._voxel_size: float = (voxel_size
                                    if voxel_size is not None
                                    else recon_cfg.get('voxel_size', 0.01))
+        self._method: str = method or recon_cfg.get('method', 'poisson')
         self._yolo_enabled: bool = yolo_enabled
 
         self._buffer = FrameBuffer(threshold=self._frame_threshold)
@@ -91,6 +93,7 @@ class ReconstructionEngine:
     def create(cls, mode: str | None = None,
                frame_threshold: int | None = None,
                voxel_size: float | None = None,
+               method: str | None = None,
                yolo_enabled: bool = True,
                config: dict | None = None) -> 'ReconstructionEngine':
         global _instance
@@ -102,6 +105,7 @@ class ReconstructionEngine:
                 _instance = cls(config, mode=mode,
                                frame_threshold=frame_threshold,
                                voxel_size=voxel_size,
+                               method=method,
                                yolo_enabled=yolo_enabled)
                 _instance._running = True
             return _instance
@@ -185,7 +189,9 @@ class ReconstructionEngine:
         entry = FrameEntry(
             frame_id=frame_id, timestamp=timestamp,
             image=image, depth_map=depth_map,
-            point_cloud=pc, detections=dets,
+            point_cloud=pc if self._method != 'tsdf' else None,
+            depth_m=depth_m if self._method == 'tsdf' else None,
+            detections=dets,
             annotated_image=anno_img,
         )
         self._buffer.push(entry)
@@ -203,6 +209,7 @@ class ReconstructionEngine:
 
     def get_config(self) -> dict:
         return {
+            'method': self._method,
             'mode': self._mode,
             'frame_threshold': self._frame_threshold,
             'voxel_size': self._voxel_size,
@@ -263,51 +270,51 @@ class ReconstructionEngine:
             from server.estimation import PositionEstimator
             estimator = PositionEstimator.create()
 
-            point_clouds = []
             positions = []
             camera_trail = []
-            raw_points = 0
             for f in frames:
                 try:
-                    pc = f.point_cloud
-                    if pc is not None and len(pc) > 0:
-                        pos = estimator.get_position_at(f.timestamp)
-                        raw_points += len(pc)
-                        point_clouds.append(pc)
-                        positions.append({
-                            'x': pos.x, 'y': pos.y,
-                            'heading': pos.heading,
-                        })
-                        camera_trail.append([pos.x, pos.y, 0.0])
+                    pos = estimator.get_position_at(f.timestamp)
+                    positions.append({
+                        'x': pos.x, 'y': pos.y,
+                        'heading': pos.heading,
+                    })
+                    camera_trail.append([pos.x, pos.y, 0.0])
                 except Exception:
                     logger.exception("处理帧 %s 失败", f.frame_id)
 
-            if not point_clouds:
-                logger.warning("无有效点云，跳过此次重建")
-                return
+            is_tsdf = (self._method == 'tsdf')
 
-            # OOM 防护：点数超限时降采样
-            MAX_POINTS = 2_000_000
-            if raw_points > MAX_POINTS:
-                keep = max(1, raw_points // (MAX_POINTS // 2))
-                for i in range(len(point_clouds)):
-                    pc = point_clouds[i]
-                    if len(pc) > 0:
-                        point_clouds[i] = pc[::keep]
-                raw_points = raw_points // keep
-                logger.warning("compact: %d → ~%d 点", raw_points * keep, raw_points)
-
-            # 多帧点云 → 世界坐标拼接
-            merged = map_frames(point_clouds, positions, config)
-            if merged is None:
-                return
-
-            # 与历史结果融合(全量/增量 + 降采样)，始终降采样避免点云无限膨胀
-            previous = (self._latest_result.point_cloud
-                        if self._latest_result else None)
-            result_pc = fuse(merged, previous,
-                             mode=self._mode,
-                             voxel_size=self._voxel_size)
+            if is_tsdf:
+                # TSDF: 跳过 point_cloud / map_frames / fuse
+                result_pc = None
+            else:
+                # Poisson: 收集点云 → 世界坐标拼接 → 融合
+                point_clouds = []
+                raw_points = 0
+                for f in frames:
+                    pc = f.point_cloud
+                    if pc is not None and len(pc) > 0:
+                        raw_points += len(pc)
+                        point_clouds.append(pc)
+                if not point_clouds:
+                    logger.warning("无有效点云，跳过此次重建")
+                    return
+                MAX_POINTS = 2_000_000
+                if raw_points > MAX_POINTS:
+                    keep = max(1, raw_points // (MAX_POINTS // 2))
+                    for i in range(len(point_clouds)):
+                        if len(point_clouds[i]) > 0:
+                            point_clouds[i] = point_clouds[i][::keep]
+                    logger.warning("compact: %d → ~%d 点", raw_points, raw_points // keep)
+                merged = map_frames(point_clouds, positions, config)
+                if merged is None:
+                    return
+                previous = (self._latest_result.point_cloud
+                            if self._latest_result else None)
+                result_pc = fuse(merged, previous,
+                                 mode=self._mode,
+                                 voxel_size=self._voxel_size)
 
             # 收集 per-frame YOLO 结果（每个 defect 自带 annotated_image）+ center_3d 空间去重
             detections = []
@@ -336,34 +343,44 @@ class ReconstructionEngine:
                     logger.info("YOLO 去重: %d → %d (radius=%.2fm)", len(all_dets), len(unique), dedup_r)
                     detections = unique
 
-            # 表面重建（可选，由 config 控制；失败自动回退到点云）
-            surface_cfg = config.get('reconstruction', {}).get('surface', {})
+            # 表面重建 / TSDF
             surface_result = None
-            if surface_cfg.get('enabled', False):
+            if is_tsdf:
                 try:
-                    from server.reconstruction import reconstruct_surface
-                    surface_result = reconstruct_surface(result_pc, config)
+                    from server.reconstruction import reconstruct_tsdf
+                    surface_result = reconstruct_tsdf(frames, positions, config)
                 except Exception:
-                    logger.exception("表面重建失败，回退到点云模式")
+                    logger.exception("TSDF 重建失败，回退到点云")
+            else:
+                surface_cfg = config.get('reconstruction', {}).get('surface', {})
+                if surface_cfg.get('enabled', False):
+                    try:
+                        from server.reconstruction import reconstruct_surface
+                        surface_result = reconstruct_surface(result_pc, config)
+                    except Exception:
+                        logger.exception("表面重建失败，回退到点云")
 
             if surface_result:
                 pc_url = surface_result["url"]
                 mesh_data = surface_result["mesh"]
-            else:
+            elif result_pc is not None:
                 pc_url = _save_pointcloud(result_pc, config)
                 mesh_data = _build_pointcloud_data(result_pc)
+            else:
+                logger.warning("重建失败: 无 mesh 无点云")
+                return
 
             elapsed = (time.perf_counter() - t0) * 1000
             output_type = "mesh" if surface_result else "point-cloud"
+            n_frames = len(frames)
+            n_result = len(result_pc) if result_pc is not None else 0
             logger.info(
                 "=== 重建完成 (%.0fms) ===\n"
-                "  帧数: %d (成功), 模式=%s\n"
-                "  原始点云: %d 点 → 拼接: %d 点 → 降采样: %d 点\n"
-                "  输出类型: %s, YOLO缺陷: %d\n"
+                "  帧数: %d, 方法=%s, 模式=%s\n"
+                "  结果: %d 点, 输出: %s, YOLO: %d\n"
                 "  文件: %s",
-                elapsed, len(point_clouds), self._mode,
-                raw_points, len(merged), len(result_pc),
-                output_type, len(detections),
+                elapsed, n_frames, self._method, self._mode,
+                n_result, output_type, len(detections),
                 pc_url or "(内存)",
             )
 

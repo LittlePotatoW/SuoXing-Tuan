@@ -95,6 +95,7 @@ export interface ReconResetRequest {
   voxel_size?: number | null
   yolo_enabled?: boolean | null
   report_name?: string | null
+  method?: string | null
 }
 
 export interface ReconConfigResponse {

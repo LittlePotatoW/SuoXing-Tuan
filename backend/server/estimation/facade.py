@@ -137,8 +137,9 @@ class PositionEstimator:
                 if delta:
                     dx, dz, dh = delta
                     heading_rad = math.radians(self._heading)
-                    self._x += dx * math.cos(heading_rad) - dz * math.sin(heading_rad)
-                    self._y += dx * math.sin(heading_rad) + dz * math.cos(heading_rad)
+                    # dx=相机右(X), dz=相机前(Z)。旋转到世界: 右=(-sin,cos), 前=(cos,sin)
+                    self._x += -dx * math.sin(heading_rad) + dz * math.cos(heading_rad)
+                    self._y +=  dx * math.cos(heading_rad) + dz * math.sin(heading_rad)
                     self._heading += dh
                     self._append()
 

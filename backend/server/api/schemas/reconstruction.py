@@ -32,10 +32,12 @@ class ReconResetRequest(BaseModel):
     frame_threshold: int | None = None
     voxel_size: float | None = None
     yolo_enabled: bool | None = Field(None, description="是否在重建中启用 YOLO 检测")
+    method: str | None = Field(None, description="poisson|tsdf")
     report_name: str | None = Field(None, description="报告名，用于实时保存标注图")
 
 
 class ReconConfigResponse(BaseModel):
+    method: str = "poisson"
     mode: str
     frame_threshold: int
     voxel_size: float

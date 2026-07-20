@@ -28,10 +28,13 @@
         <button class="apply-btn" @click="reconApplied = true">应用</button>
       </div>
       <div class="row">
-        <label class="radio"><input type="radio" v-model="reconMode" value="incremental" /> 增量重建</label>
-        <label class="radio"><input type="radio" v-model="reconMode" value="full" /> 全量重建</label>
+        <label class="radio"><input type="radio" v-model="reconMethod" value="poisson" /> Poisson</label>
+        <label class="radio"><input type="radio" v-model="reconMethod" value="tsdf" /> TSDF</label>
+      </div>
+      <div class="row" v-if="reconMethod === 'poisson'" style="margin-top:4px">
         <span class="field">帧阈值 <input class="in sm" v-model.number="frameThreshold" /></span>
-        <span class="field">体素 <input class="in sm" v-model.number="voxelSize" step="0.001" /> m</span>
+        <label class="radio"><input type="radio" v-model="reconMode" value="incremental" /> 增量</label>
+        <label class="radio"><input type="radio" v-model="reconMode" value="full" /> 全量</label>
       </div>
       <p v-if="reconApplied" class="applied-msg">✓ 已应用 (引擎已重启)</p>
     </section>
@@ -64,7 +67,6 @@ import { useSettingsStore } from '@/stores/settings'
 import { reconDefaults, estimationDefaults } from '@/config/defaults'
 import { httpClient } from '@/network/http-client'
 import { resetEstimator } from '@/api/vehicle'
-import { resetReconstruction } from '@/api/reconstruction'
 
 const settings = useSettingsStore()
 
@@ -90,22 +92,32 @@ function syncFormFromStore() {
   }
 }
 
-// 挂载时从后端读取当前运行中的配置
+const RECON_STORAGE = 'suoxingtuan_recon_config'
+
+function loadReconConfig() {
+  try {
+    const saved = localStorage.getItem(RECON_STORAGE)
+    if (saved) {
+      const c = JSON.parse(saved)
+      reconMethod.value = c.method || reconDefaults.method
+      reconMode.value = c.mode || reconDefaults.mode
+      frameThreshold.value = c.frame_threshold ?? reconDefaults.frame_threshold
+      return
+    }
+  } catch {}
+  reconMethod.value = reconDefaults.method
+  reconMode.value = reconDefaults.mode
+  frameThreshold.value = reconDefaults.frame_threshold
+}
+
 onMounted(async () => {
+  loadReconConfig()
   try {
     const estRes = await httpClient.get('/api/vehicle/estimator/config')
     const cfg = estRes.data
     estMode.value = cfg.mode || estimationDefaults.mode
     wheelbase.value = cfg.wheelbase ?? estimationDefaults.wheelbase
     constSpeed.value = cfg.constant_speed ?? estimationDefaults.constant_speed
-  } catch { /* 后端不可达，用 config.yaml 默认值 */ }
-
-  try {
-    const reconRes = await httpClient.get('/api/reconstruction/config')
-    const cfg = reconRes.data
-    reconMode.value = cfg.mode || reconDefaults.mode
-    frameThreshold.value = cfg.frame_threshold ?? reconDefaults.frame_threshold
-    voxelSize.value = cfg.voxel_size ?? reconDefaults.voxel_size
   } catch { /* 后端不可达 */ }
 })
 
@@ -130,20 +142,18 @@ watch([addr, port], () => {
 }, { deep: true })
 
 // --- 重建参数 — 初始值来自 frontend/config.yaml ---
+const reconMethod = ref(reconDefaults.method)
 const reconMode = ref(reconDefaults.mode)
 const frameThreshold = ref(reconDefaults.frame_threshold)
-const voxelSize = ref(reconDefaults.voxel_size)
 const reconApplied = ref(false)
 
-watch(reconApplied, async (v) => {
+watch(reconApplied, (v) => {
   if (!v) return
-  try {
-    await resetReconstruction({
-      mode: reconMode.value,
-      frame_threshold: frameThreshold.value,
-      voxel_size: voxelSize.value,
-    })
-  } catch { /* 后端不可达 */ }
+  localStorage.setItem(RECON_STORAGE, JSON.stringify({
+    method: reconMethod.value,
+    mode: reconMode.value,
+    frame_threshold: frameThreshold.value,
+  }))
   reconApplied.value = false
 })
 

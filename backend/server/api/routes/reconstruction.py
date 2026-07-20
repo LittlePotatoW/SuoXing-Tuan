@@ -111,6 +111,7 @@ def reset_reconstruction(body: ReconResetRequest):
         mode=body.mode,
         frame_threshold=body.frame_threshold,
         voxel_size=body.voxel_size,
+        method=body.method,
         yolo_enabled=(body.yolo_enabled
                       if body.yolo_enabled is not None else True),
     )

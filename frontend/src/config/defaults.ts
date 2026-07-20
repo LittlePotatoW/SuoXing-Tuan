@@ -16,7 +16,7 @@ interface Config {
   telemetry: { lan: { host: string; port: number }; server: { host: string; port: number } }
   frame: { lan: { host: string; port: number }; server: { host: string; port: number } }
   backend: { host: string; port: number }
-  reconstruction: { mode: string; frame_threshold: number; voxel_size: number }
+  reconstruction: { mode: string; frame_threshold: number; voxel_size: number; method: string }
   estimation: {
     mode: string
     wheelbase: number

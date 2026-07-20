@@ -87,7 +87,7 @@ class RgbdOdometryStrategy:
             # T[0,3]=dx, T[2,3]=dz(前), heading ≈ atan2(T[2,0], T[2,2])
             dx = float(T[0, 3])
             dz = float(T[2, 3])
-            dheading = math.degrees(math.atan2(T[2, 0], T[2, 2]))
+            dheading = -math.degrees(math.atan2(T[2, 0], T[2, 2]))
             return dx, dz, dheading
 
         except Exception:
