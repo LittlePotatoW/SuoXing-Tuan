@@ -6,7 +6,9 @@
 //   导出 useConnection()
 //     connectAll()  同时连接遥测和帧数据源
 //     disconnectAll()  断开所有 WS
-//   监听 settings.mode 变化自动重连
+//     reconnectAll()  断连后重连（设备切换时使用）
+//   WS 客户端为模块级单例，多次调用返回同一组连接
+//   监听 settings.telemetry / settings.frame 变化自动重连
 // ============================================================
 
 import { onUnmounted, watch } from 'vue'
@@ -18,8 +20,13 @@ import { useVehicleStore } from '@/stores/vehicle'
 import { postTelemetry, postFrame } from '@/api/vehicle'
 import type { Telemetry, Frame } from '@/types/data'
 
+// ---------- 模块级单例状态 ----------
+let telemetryWS: ReturnType<typeof createWSClient> | null = null
+let frameWS: ReturnType<typeof createWSClient> | null = null
 let onTelemetry: ((t: Telemetry) => void) | null = null
 let onFrame: ((f: Frame) => void) | null = null
+let watchersSetup = false
+let modelingActive = false
 
 export function setRecordingHooks(
   telemetryHook: ((t: Telemetry) => void) | null,
@@ -29,17 +36,19 @@ export function setRecordingHooks(
   onFrame = frameHook
 }
 
+/** 控制是否将数据转发到后端进行重建（实时建模页面控制） */
+export function setModelingActive(active: boolean) {
+  modelingActive = active
+}
+
+function buildURL(source: { host: string; port: number }) {
+  return `ws://${source.host}:${source.port}`
+}
+
 export function useConnection() {
   const settings = useSettingsStore()
   const conn = useConnectionStore()
   const vehicle = useVehicleStore()
-
-  let telemetryWS: ReturnType<typeof createWSClient> | null = null
-  let frameWS: ReturnType<typeof createWSClient> | null = null
-
-  function buildURL(source: { host: string; port: number }) {
-    return `ws://${source.host}:${source.port}`
-  }
 
   function connectAll() {
     disconnectAll()
@@ -51,8 +60,7 @@ export function useConnection() {
         const data = parseTelemetry(raw)
         vehicle.updateTelemetry(data.speed, data.steering_angle)
         onTelemetry?.(data)
-        // 转发给后端 API
-        postTelemetry(data).catch(() => {})
+        if (modelingActive) postTelemetry(data).catch(() => {})
       } catch { /* ignore malformed */ }
     })
     telemetryWS.connect()
@@ -63,7 +71,7 @@ export function useConnection() {
       try {
         const data = parseFrame(raw)
         onFrame?.(data)
-        postFrame(data).catch(() => {})
+        if (modelingActive) postFrame(data).catch(() => {})
       } catch { /* ignore malformed */ }
     })
     frameWS.connect()
@@ -76,14 +84,32 @@ export function useConnection() {
     frameWS = null
   }
 
-  // 网络模式切换时自动重连
-  watch(() => settings.mode, () => {
+  function reconnectAll() {
+    disconnectAll()
     connectAll()
-  })
+  }
+
+  // 只注册一次 watcher（模块级单例）
+  if (!watchersSetup) {
+    watchersSetup = true
+
+    // 模式切换（LAN ↔ 服务器）时重连
+    watch(() => settings.mode, () => {
+      reconnectAll()
+    })
+
+    // IP / 端口变化时自动重连（设备切换）
+    watch(
+      [() => ({ ...settings.telemetry }), () => ({ ...settings.frame })],
+      () => {
+        reconnectAll()
+      },
+    )
+  }
 
   onUnmounted(() => {
     disconnectAll()
   })
 
-  return { connectAll, disconnectAll }
+  return { connectAll, disconnectAll, reconnectAll }
 }

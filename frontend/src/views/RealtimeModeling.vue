@@ -51,7 +51,7 @@ import { resetReconstruction, getReconstructionStatus } from '@/api/reconstructi
 import { useConnectionStore } from '@/stores/connection'
 import { createSession } from '@/services/data-saver/data-saver'
 import type { Session } from '@/services/data-saver/data-saver'
-import { setRecordingHooks } from '@/composables/useConnection'
+import { setRecordingHooks, setModelingActive } from '@/composables/useConnection'
 import { saveReport as saveReportApi } from '@/api/report'
 import { useReconstructionWS, type MeshData } from '@/composables/useReconstructionWS'
 import { reconDefaults } from '@/config/defaults'
@@ -151,6 +151,7 @@ async function startModeling() {
     )
   }
 
+  setModelingActive(true)
   modeling.value = true
   frameCount.value = 0
   defects.value = []
@@ -162,6 +163,7 @@ async function startModeling() {
 }
 
 async function stopModeling() {
+  setModelingActive(false)
   modeling.value = false
   if (statusTimer) { clearInterval(statusTimer); statusTimer = null }
   if (fallbackTimer) { clearInterval(fallbackTimer); fallbackTimer = null }

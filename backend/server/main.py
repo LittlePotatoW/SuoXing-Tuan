@@ -33,6 +33,7 @@ from server.api.routes import (
     detection_router,
     session_router,
     report_router,
+    network_router,
 )
 
 
@@ -51,6 +52,7 @@ def create_app() -> FastAPI:
     app.include_router(detection_router)
     app.include_router(session_router)
     app.include_router(report_router)
+    app.include_router(network_router)
 
     output_dir = Path(__file__).resolve().parent.parent / "output"
     output_dir.mkdir(parents=True, exist_ok=True)

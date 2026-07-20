@@ -15,15 +15,8 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted } from 'vue'
 import AppSidebar from '@/components/layout/AppSidebar.vue'
 import AppStatusBar from '@/components/layout/AppStatusBar.vue'
-import { useConnection } from '@/composables/useConnection'
-
-const { connectAll } = useConnection()
-onMounted(() => {
-  connectAll()
-})
 </script>
 
 <style>
