@@ -64,7 +64,9 @@ camera_to_vehicle:
 reconstruction:
   mode: "incremental"           # "full" 全量重建 / "incremental" 增量重建
   frame_threshold: 30           # 累积多少帧触发一次重建
-  voxel_size: 0.10              # 点云降采样体素大小 (m)
+  voxel_size: 0.01              # 点云降采样体素大小 (m)
+  max_points: 2000000            # 最大点数，超限自动降采样
+  crack_dedup_radius: 0.3        # 缺陷 3D 去重半径 (m)
   surface:
     enabled: true              # 开启 Poisson 表面重建 (需 open3d)
     poisson_depth: 8            # 6~10, 越高越精细, 计算量指数增长
@@ -81,7 +83,7 @@ estimation:
   initial_x: 0.0               # 初始 x 坐标 (m)
   initial_y: 0.0               # 初始 y 坐标 (m)
   initial_heading: 0.0         # 初始航向角 (度), 0 = 正前方
-  wheelbase: 2.0               # 车辆轴距 (m), 模式1/4 用
+  wheelbase: 1.5               # 车辆轴距 (m), 模式1/4 用
   constant_speed: 1.0          # 模式2 默认速度 (m/s)
   fusion_weight: 0.5           # 模式4 融合权重 (0=纯视觉, 1=纯轮式)
   max_history: 10000            # 最大轨迹存储点数
@@ -91,5 +93,5 @@ estimation:
 # -------------------------------------------
 detection:
   model_path: "models/crack-detector.pt"  # 模型文件路径
-  conf_threshold: 0.5           # 置信度阈值
+  conf_threshold: 0.3           # 置信度阈值
   device: "cpu"                 # 推理设备: "cuda" / "cpu"

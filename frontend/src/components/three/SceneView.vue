@@ -13,6 +13,7 @@
 
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted } from 'vue'
+import * as THREE from 'three'
 import { SceneManager } from '@/services/renderer/three-scene'
 import { addToScene, type MeshData } from '@/services/renderer/point-cloud'
 import { addCracks, resetCrackCache } from '@/services/renderer/annotations'
@@ -69,6 +70,24 @@ function updateCracks(cracks: DetectionItem[]): void {
   crackCount.value = cracks.length
 }
 
+function updateTrail(trail: number[][]): void {
+  if (!sceneMgr || !trail.length) return
+  // 清旧轨迹
+  sceneMgr.trailGroup.traverse((child) => {
+    if (child instanceof THREE.Line) {
+      child.geometry?.dispose()
+      if (Array.isArray(child.material)) child.material.forEach(m => m.dispose())
+      else child.material?.dispose()
+    }
+  })
+  sceneMgr.trailGroup.clear()
+  // (x, y, z) → (x, z, -y) 世界坐标转 Three.js
+  const pts = trail.map(p => new THREE.Vector3(p[0], p[2] ?? 0, -(p[1] ?? 0)))
+  const geo = new THREE.BufferGeometry().setFromPoints(pts)
+  const mat = new THREE.LineBasicMaterial({ color: 0x4fc3f7 })
+  sceneMgr.trailGroup.add(new THREE.Line(geo, mat))
+}
+
 function resetScene(): void {
   sceneMgr?.resetScene()
   resetCrackCache()
@@ -76,7 +95,7 @@ function resetScene(): void {
   crackCount.value = 0
 }
 
-defineExpose({ updateMesh, updateCracks, resetScene })
+defineExpose({ updateMesh, updateCracks, updateTrail, resetScene })
 </script>
 
 <style scoped>

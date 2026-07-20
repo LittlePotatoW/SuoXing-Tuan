@@ -94,6 +94,7 @@ export interface ReconResetRequest {
   frame_threshold?: number | null
   voxel_size?: number | null
   yolo_enabled?: boolean | null
+  report_name?: string | null
 }
 
 export interface ReconConfigResponse {

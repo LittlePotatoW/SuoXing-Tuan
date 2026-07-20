@@ -12,6 +12,12 @@
       <button class="btn" :disabled="!selectedSession || replaying" @click="startReplay">
         {{ replaying ? '回放中...' : '开始回放重建' }}
       </button>
+
+      <label class="toggle"><input type="checkbox" v-model="yoloOn" :disabled="replaying" /> YOLO检测</label>
+      <label class="toggle"><input type="checkbox" v-model="saveReport" :disabled="replaying" /> 保存Report</label>
+      <input class="task-input" v-model="taskName" placeholder="任务名" :disabled="replaying" />
+      <span class="spacer"></span>
+      <span class="frame-count">帧: {{ sentFrames }}/{{ totalFrames }}</span>
     </div>
 
     <div class="main-row">
@@ -53,6 +59,7 @@ import { resetEstimator, postTelemetry, postFrame } from '@/api/vehicle'
 import { loadSession } from '@/services/data-loader/local-loader'
 import type { Session } from '@/services/data-loader/local-loader'
 import { listSessions } from '@/api/session'
+import { saveReport as saveReportApi } from '@/api/report'
 import { useReconstructionWS, type MeshData } from '@/composables/useReconstructionWS'
 import { reconDefaults } from '@/config/defaults'
 import type { DetectionItem } from '@/types/api'
@@ -65,6 +72,9 @@ const sentFrames = ref(0)
 const totalFrames = ref(0)
 const selected = ref<DetectionItem | null>(null)
 const defects = ref<DetectionItem[]>([])
+const yoloOn = ref(true)
+const saveReport = ref(false)
+const taskName = ref('')
 
 // WebSocket 驱动重建结果接收
 const onMeshData = (data: MeshData) => {
@@ -74,8 +84,17 @@ const onCracks = (cracks: DetectionItem[]) => {
   defects.value = cracks
   sceneRef.value?.updateCracks(cracks)
 }
+const onTrail = (trail: number[][]) => {
+  sceneRef.value?.updateTrail(trail)
+}
+const pointCloudUrl = ref('')
+const annotatedImages = ref<string[]>([])
+const onMeta = (meta: { point_cloud_url?: string; annotated_images?: string[] }) => {
+  if (meta.point_cloud_url) pointCloudUrl.value = meta.point_cloud_url
+  if (meta.annotated_images) annotatedImages.value = meta.annotated_images
+}
 const { connect: wsConnect, disconnect: wsDisconnect } =
-  useReconstructionWS(onMeshData, onCracks)
+  useReconstructionWS(onMeshData, onCracks, onTrail, onMeta)
 
 async function fetchSessions() {
   try {
@@ -103,8 +122,12 @@ async function startReplay() {
   selected.value = null
 
   try {
+    const date = new Date().toISOString().slice(0, 10).replace(/-/g, '')
+    const reportDir = saveReport.value ? `report_${taskName.value || selectedSession.value || '未命名'}_${date}` : ''
     await resetReconstruction({
       mode: reconDefaults.mode, frame_threshold: reconDefaults.frame_threshold, voxel_size: reconDefaults.voxel_size,
+      yolo_enabled: yoloOn.value,
+      report_name: reportDir || null,
     })
     await resetEstimator({ mode: 'bicycle' })
   } catch (e) { console.warn('reset reconstruction failed:', e) }
@@ -121,6 +144,19 @@ async function startReplay() {
       const frame = await session.readFrame(fi.id)
       await postFrame(frame)
       sentFrames.value++
+    } catch { /* ignore */ }
+  }
+
+  // 保存 Report
+  if (saveReport.value && defects.value.length > 0) {
+    const date = new Date().toISOString().slice(0, 10).replace(/-/g, '')
+    const task = taskName.value || selectedSession.value || '未命名'
+    const dirName = `report_${task}_${date}`
+    try {
+      await saveReportApi({
+        filename: `${dirName}.json`,
+        data: { task_name: task, date, point_cloud_url: pointCloudUrl.value, defects: defects.value },
+      })
     } catch { /* ignore */ }
   }
 }
@@ -143,6 +179,10 @@ async function startReplay() {
 .defect-table tr:hover { background: #f0f4ff; }
 .defect-table tr.selected { background: #dbeafe; }
 .empty { color: #aaa; text-align: center; font-size: 12px; padding: 10px; }
+.toggle { display: flex; align-items: center; gap: 4px; font-size: 13px; cursor: pointer; }
+.task-input { padding: 4px 8px; border: 1px solid #ccc; border-radius: 3px; font-size: 13px; width: 100px; }
+.frame-count { color: #888; font-size: 12px; }
+.spacer { flex: 1; }
 .preview-mini { padding: 8px; border-top: 1px solid #eee; }
 .preview-title { font-size: 12px; color: #666; margin-bottom: 4px; }
 .preview-placeholder { height: 100px; background: #f5f5f5; display: flex; align-items: center; justify-content: center; color: #aaa; font-size: 12px; border-radius: 4px; }

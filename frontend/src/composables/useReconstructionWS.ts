@@ -23,6 +23,8 @@ export interface MeshData {
 export function useReconstructionWS(
   onMeshData: (data: MeshData) => void,
   onCracks: (detections: any[]) => void,
+  onTrail?: (trail: number[][]) => void,
+  onMeta?: (meta: { point_cloud_url?: string }) => void,
 ) {
   const settings = useSettingsStore()
   const connected = ref(false)
@@ -56,14 +58,18 @@ export function useReconstructionWS(
     ws.onmessage = (event) => {
       try {
         const msg = JSON.parse(event.data)
-        console.log('[reconWS] received:', msg.type, msg.data ? `ts=${msg.data.timestamp} mesh=${!!msg.data.mesh_data}` : '')
         if (msg.type === 'rebuild_complete' && msg.data) {
           if (msg.data.mesh_data) {
-            console.log('[reconWS] calling onMeshData, verts:', msg.data.mesh_data.vertex_count)
             onMeshData(msg.data.mesh_data)
           }
           if (msg.data.detections && msg.data.detections.length > 0) {
             onCracks(msg.data.detections)
+          }
+          if (msg.data.camera_trail && msg.data.camera_trail.length > 0 && onTrail) {
+            onTrail(msg.data.camera_trail)
+          }
+          if (onMeta) {
+            onMeta({ point_cloud_url: msg.data.point_cloud_url })
           }
         }
       } catch { /* 忽略格式错误 */ }

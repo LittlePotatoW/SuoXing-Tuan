@@ -83,11 +83,22 @@ const onMeshData = (data: MeshData) => {
   sceneRef.value?.updateMesh(data)
 }
 const onCracks = (cracks: DetectionItem[]) => {
+  console.log('[onCracks] received:', cracks.length, 'defects')
+  if (cracks.length > 0) {
+    const d = cracks[0] as any
+    console.log('[onCracks] first defect keys:', Object.keys(d), 'has anno:', !!d.annotated_image, 'anno len:', d.annotated_image?.length)
+  }
   defects.value = cracks
   sceneRef.value?.updateCracks(cracks)
 }
+const onTrail = (trail: number[][]) => {
+  sceneRef.value?.updateTrail(trail)
+}
+const onMeta = (meta: { point_cloud_url?: string }) => {
+  if (meta.point_cloud_url) pointCloudUrl.value = meta.point_cloud_url
+}
 const { connected: wsConnected, connect: wsConnect, disconnect: wsDisconnect } =
-  useReconstructionWS(onMeshData, onCracks)
+  useReconstructionWS(onMeshData, onCracks, onTrail, onMeta)
 
 // WS 断开 5 秒后启动 HTTP 轮询降级
 watch(wsConnected, (v) => {
@@ -117,12 +128,15 @@ async function pollStatus() {
 }
 
 async function startModeling() {
+  const date = new Date().toISOString().slice(0, 10).replace(/-/g, '')
+  const reportDir = saveReport.value ? `report_${taskName.value || '未命名'}_${date}` : ''
   try {
     await resetReconstruction({
       mode: reconDefaults.mode,
       frame_threshold: reconDefaults.frame_threshold,
       voxel_size: reconDefaults.voxel_size,
       yolo_enabled: yoloOn.value,
+      report_name: reportDir || null,
     })
   } catch { /* backend unreachable */ }
 
@@ -161,9 +175,10 @@ async function stopModeling() {
   if (saveReport.value && (defects.value.length > 0 || pointCloudUrl.value)) {
     const date = new Date().toISOString().slice(0, 10).replace(/-/g, '')
     const task = taskName.value || '未命名'
+    const dirName = `report_${task}_${date}`
     try {
       await saveReportApi({
-        filename: `report_${task}_${date}.json`,
+        filename: `${dirName}.json`,
         data: { task_name: task, date, point_cloud_url: pointCloudUrl.value, defects: defects.value },
       })
     } catch { /* 后端不可达 */ }

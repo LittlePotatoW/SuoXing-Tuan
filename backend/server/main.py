@@ -56,6 +56,10 @@ def create_app() -> FastAPI:
     output_dir.mkdir(parents=True, exist_ok=True)
     app.mount("/output", StaticFiles(directory=str(output_dir)), name="output")
 
+    report_dir = Path(__file__).resolve().parent.parent.parent / "Report_Data"
+    report_dir.mkdir(parents=True, exist_ok=True)
+    app.mount("/report-data", StaticFiles(directory=str(report_dir)), name="report-data")
+
     return app
 
 

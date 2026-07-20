@@ -29,7 +29,8 @@
       <div class="preview-panel">
         <div class="panel-title">预览</div>
         <div v-if="selected" class="preview-body">
-          <div class="preview-placeholder">（标注图预览）</div>
+          <img v-if="selected.image" :src="selected.image" class="preview-img" />
+          <div v-else class="preview-placeholder">（无标注图）</div>
           <div class="note-row">
             <input v-model="note" class="note-input" placeholder="备注..." />
             <button class="btn sm" @click="saveNote">保存</button>
@@ -44,6 +45,7 @@
 <script setup lang="ts">
 import { ref, watch, onMounted } from 'vue'
 import { listReports, loadReport } from '@/api/report'
+import { httpClient } from '@/network/http-client'
 
 const selected = ref<any>(null)
 const note = ref('')
@@ -62,13 +64,17 @@ onMounted(() => { fetchReports() })
 
 watch(selectedReport, async (filename) => {
   if (!filename) { defects.value = []; return }
+  selected.value = null
+  note.value = ''
   try {
     const data = await loadReport(filename)
     if (data.defects) {
+      const baseUrl = httpClient.defaults.baseURL ?? ''
       defects.value = data.defects.map((d: any) => ({
         id: d.id, type: d.class_name,
         conf: (d.confidence * 100).toFixed(0) + '%',
-        pos: (d.center_3d || [0, 0, 0]).join(', '),
+        pos: (d.center_3d || [0, 0, 0]).map((v: number) => v.toFixed(2)).join(', '),
+        image: d.image ? `${baseUrl}/report-data/${filename}/${d.image}` : null,
       }))
     }
   } catch { /* 加载失败 */ }
@@ -102,6 +108,7 @@ function saveNote() {
 .defect-table tr:hover { background: #f0f4ff; }
 .defect-table tr.selected { background: #dbeafe; }
 .preview-body { flex: 1; display: flex; flex-direction: column; }
+.preview-img { flex: 1; margin: 8px; object-fit: contain; min-height: 0; border-radius: 4px; }
 .preview-placeholder { flex: 1; margin: 8px; background: #f5f5f5; border-radius: 4px; display: flex; align-items: center; justify-content: center; color: #aaa; font-size: 13px; }
 .preview-empty { flex: 1; display: flex; align-items: center; justify-content: center; color: #aaa; font-size: 13px; }
 .note-row { display: flex; gap: 6px; padding: 8px; border-top: 1px solid #eee; }

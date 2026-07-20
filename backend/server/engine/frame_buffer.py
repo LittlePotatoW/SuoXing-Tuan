@@ -22,8 +22,9 @@ class FrameEntry:
     timestamp: float
     image: str
     depth_map: str
-    point_cloud: np.ndarray | None = None      # 预计算无序点云 (N,3)
-    detections: list = field(default_factory=list)  # per-frame 3D 检测结果
+    point_cloud: np.ndarray | None = None
+    detections: list = field(default_factory=list)
+    annotated_image: str = ''  # YOLO 标注图 base64
 
 
 class FrameBuffer:

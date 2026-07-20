@@ -11,16 +11,35 @@
 #   RECON_MODE       重建模式 (config.reconstruction.mode)
 # ============================================================
 
+import base64
 import logging
 import os
 import threading
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 
 import numpy as np
 
 from server.engine.frame_buffer import FrameBuffer, FrameEntry
 from server.pointcloud import decode_depth
+
+# 标注图实时保存目录
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent
+REPORT_DATA_DIR = _PROJECT_ROOT / "Report_Data"
+# 当前 session 的报告名（开始建模时设置，停止时清空）
+_current_report_name: str = ""
+
+def set_report_name(name: str) -> None:
+    global _current_report_name
+    _current_report_name = name
+    img_dir = REPORT_DATA_DIR / name / "images"
+    img_dir.mkdir(parents=True, exist_ok=True)
+    logger.info("[report-save] set_report_name='%s' dir=%s", name, img_dir)
+
+def clear_report_name() -> None:
+    global _current_report_name
+    _current_report_name = ""
 from server.reconstruction import map_frames, fuse
 
 logger = logging.getLogger(__name__)
@@ -35,7 +54,9 @@ class _ReconstructionResult:
     point_cloud_url: str
     point_cloud: np.ndarray | None = None
     detections: list = field(default_factory=list)
-    mesh_data: dict | None = None  # { vertices, faces, vertex_count, face_count, vertex_colors }
+    mesh_data: dict | None = None
+    camera_trail: list = field(default_factory=list)
+    annotated_images: list = field(default_factory=list)
 
 
 class ReconstructionEngine:
@@ -109,6 +130,7 @@ class ReconstructionEngine:
 
         # 2. YOLO per-frame（如果开启）— 2D 检测 + NMS + 3D 映射
         dets = []
+        anno_img = ''
         if self._yolo_enabled:
             try:
                 from server.detection import Detector, apply_nms, map_to_3d
@@ -119,6 +141,23 @@ class ReconstructionEngine:
                         fd = apply_nms(fd)                         # per-frame NMS
                         fd = map_to_3d(fd, ordered_pc, depth_m)    # 2D→3D，有序点云 ✓
                         dets = fd
+                    # 全局唯一 id + 标注图实时写盘（同一帧共享）
+                    anno = detector.latest_annotated()
+                    anno_img_url = ''
+                    anno_b64 = anno.get('annotated_image', '')
+                    if dets and anno_b64 and _current_report_name:
+                        try:
+                            img_dir = REPORT_DATA_DIR / _current_report_name / "images"
+                            img_dir.mkdir(parents=True, exist_ok=True)
+                            fname = f"{frame_id}.jpg"
+                            filepath = img_dir / fname
+                            filepath.write_bytes(base64.b64decode(anno_b64))
+                            anno_img_url = f"images/{fname}"
+                        except Exception:
+                            logger.exception("标注图写盘失败 frame=%s", frame_id)
+                    for i, d in enumerate(dets):
+                        d['id'] = f"{frame_id}_{i}"
+                        d['annotated_image'] = anno_img_url
             except Exception:
                 logger.exception("YOLO per-frame 失败, frame=%s", frame_id)
 
@@ -147,6 +186,7 @@ class ReconstructionEngine:
             frame_id=frame_id, timestamp=timestamp,
             image=image, depth_map=depth_map,
             point_cloud=pc, detections=dets,
+            annotated_image=anno_img,
         )
         self._buffer.push(entry)
         self._frame_count_total += 1
@@ -193,6 +233,8 @@ class ReconstructionEngine:
             "point_cloud_url": self._latest_result.point_cloud_url,
             "detections": self._latest_result.detections,
             "mesh_data": self._latest_result.mesh_data,
+            "camera_trail": self._latest_result.camera_trail,
+            "annotated_images": self._latest_result.annotated_images,
         }
 
     # ============================================================
@@ -223,6 +265,7 @@ class ReconstructionEngine:
 
             point_clouds = []
             positions = []
+            camera_trail = []
             raw_points = 0
             for f in frames:
                 try:
@@ -235,12 +278,24 @@ class ReconstructionEngine:
                             'x': pos.x, 'y': pos.y,
                             'heading': pos.heading,
                         })
+                        camera_trail.append([pos.x, pos.y, 0.0])
                 except Exception:
                     logger.exception("处理帧 %s 失败", f.frame_id)
 
             if not point_clouds:
                 logger.warning("无有效点云，跳过此次重建")
                 return
+
+            # OOM 防护：点数超限时降采样
+            MAX_POINTS = 2_000_000
+            if raw_points > MAX_POINTS:
+                keep = max(1, raw_points // (MAX_POINTS // 2))
+                for i in range(len(point_clouds)):
+                    pc = point_clouds[i]
+                    if len(pc) > 0:
+                        point_clouds[i] = pc[::keep]
+                raw_points = raw_points // keep
+                logger.warning("compact: %d → ~%d 点", raw_points * keep, raw_points)
 
             # 多帧点云 → 世界坐标拼接
             merged = map_frames(point_clouds, positions, config)
@@ -254,19 +309,32 @@ class ReconstructionEngine:
                              mode=self._mode,
                              voxel_size=self._voxel_size)
 
-            # 收集 per-frame YOLO 结果 + 跨帧 NMS
+            # 收集 per-frame YOLO 结果（每个 defect 自带 annotated_image）+ center_3d 空间去重
             detections = []
             if self._yolo_enabled:
                 all_dets = []
                 for f in frames:
                     all_dets.extend(f.detections)
                 if all_dets:
-                    try:
-                        from server.detection import apply_nms
-                        detections = apply_nms(all_dets)  # 跨帧 NMS
-                    except Exception:
-                        logger.exception("跨帧 NMS 失败")
-                        detections = all_dets
+                    # center_3d 空间去重
+                    dedup_r = config.get('reconstruction', {}).get('crack_dedup_radius', 0.3)
+                    unique: list[dict] = []
+                    for d in all_dets:
+                        c3 = d.get('center_3d')
+                        if not c3 or len(c3 or []) < 3:
+                            unique.append(d)
+                            continue
+                        dup = False
+                        for u in unique:
+                            uc = u.get('center_3d')
+                            if uc and len(uc) >= 3:
+                                if np.linalg.norm(np.array(c3) - np.array(uc)) < dedup_r:
+                                    dup = True
+                                    break
+                        if not dup:
+                            unique.append(d)
+                    logger.info("YOLO 去重: %d → %d (radius=%.2fm)", len(all_dets), len(unique), dedup_r)
+                    detections = unique
 
             # 表面重建（可选，由 config 控制；失败自动回退到点云）
             surface_cfg = config.get('reconstruction', {}).get('surface', {})
@@ -302,9 +370,10 @@ class ReconstructionEngine:
             self._latest_result = _ReconstructionResult(
                 timestamp=time.time(),
                 point_cloud_url=pc_url or "",
-                point_cloud=result_pc,  # 增量模式下次用
+                point_cloud=result_pc,
                 detections=detections,
                 mesh_data=mesh_data,
+                camera_trail=camera_trail,
             )
 
 
