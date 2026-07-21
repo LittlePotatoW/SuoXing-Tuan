@@ -1,0 +1,8 @@
+# 二进制驱动 & 安装包 (从 referrence-local/ 获取)
+*.dll
+*.exe
+
+# Python
+__pycache__/
+*.pyc
+*.pyo

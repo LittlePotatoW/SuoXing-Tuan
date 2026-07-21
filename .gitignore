@@ -47,6 +47,4 @@ tests/
 # js环境
 node_modules/
 
-OTHER_END/
-
 Log/
