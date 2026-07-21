@@ -26,12 +26,11 @@ export async function createSession(name: string, startTime: number, telemetryIn
 }
 
 export async function saveSessionFrame(data: {
-  session_name: string; frame_id: number
-  image_name: string; depth_name: string
-  image_data: string; depth_data: string
+  session_name: string
+  frames: { id: number; image_name: string; depth_name: string; image_data: string; depth_data: string }[]
 }) {
-  const res = await httpClient.post('/api/session/frame', data, { timeout: 30000 })
-  return res.data as { status: string; frame_id: number }
+  const res = await httpClient.post('/api/session/frames', data, { timeout: 30000 })
+  return res.data as { status: string; count: number }
 }
 
 export async function saveSessionManifest(name: string, manifest: any) {

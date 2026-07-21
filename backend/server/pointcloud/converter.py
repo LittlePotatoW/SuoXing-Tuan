@@ -133,7 +133,7 @@ def sample_colors(image_b64: str, depth_m: np.ndarray) -> np.ndarray | None:
 
     # 尺寸不一致：把 RGB resize 到深度图尺寸
     rgb_full = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
-    rgb_resized = cv2.resize(rgb_full, (Wd, Hd))
+    rgb_resized = cv2.resize(rgb_full, (Wd, Hd), interpolation=cv2.INTER_NEAREST)
     mask_valid = depth_m > 0
     rows, cols = np.where(mask_valid)
     return rgb_resized[rows, cols, :].astype(np.uint8)

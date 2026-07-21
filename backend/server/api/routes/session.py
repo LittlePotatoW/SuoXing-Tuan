@@ -68,6 +68,24 @@ def create_session(body: SessionCreateRequest):
     return {"status": "ok", "name": body.name}
 
 
+@router.post("/frames", status_code=200)
+def save_frames(body: dict):
+    """批次写盘：一次请求写入多帧"""
+    session_name = body.get('session_name', '')
+    frames = body.get('frames', [])
+    if not session_name or not frames:
+        raise HTTPException(400, "缺少 session_name 或 frames")
+    session_path = SESSION_DIR / session_name
+    frames_path = session_path / "frames"
+    frames_path.mkdir(parents=True, exist_ok=True)
+    for f in frames:
+        img_path = frames_path / f.get('image_name', '')
+        dep_path = frames_path / f.get('depth_name', '')
+        img_path.write_bytes(base64.b64decode(f.get('image_data', '')))
+        dep_path.write_bytes(base64.b64decode(f.get('depth_data', '')))
+    return {"status": "ok", "count": len(frames)}
+
+
 @router.post("/frame", status_code=200)
 def save_frame(body: SessionFrameRequest):
     """逐帧写盘：image JPEG + depth PNG"""

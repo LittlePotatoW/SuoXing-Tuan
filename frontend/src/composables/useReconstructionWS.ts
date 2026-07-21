@@ -66,6 +66,7 @@ export function useReconstructionWS(
             onCracks(msg.data.detections)
           }
           if (msg.data.camera_trail && msg.data.camera_trail.length > 0 && onTrail) {
+            console.log('[reconWS] trail received:', msg.data.camera_trail.length, 'pts, first:', msg.data.camera_trail[0], 'last:', msg.data.camera_trail[msg.data.camera_trail.length - 1])
             onTrail(msg.data.camera_trail)
           }
           if (onMeta) {

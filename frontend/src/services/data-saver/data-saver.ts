@@ -1,10 +1,12 @@
 // ============================================================
 // frontend/src/services/data-saver/data-saver.ts
-// 数据保存层: 录制 session → 逐帧实时 POST 到后端写盘
+// 数据保存层: 录制 session → 10帧批量 POST 到后端写盘
 // ============================================================
 
 import { createSession as apiCreate, saveSessionFrame, saveSessionManifest } from '@/api/session'
 import type { Telemetry, Frame } from '@/types/data'
+
+const BATCH_SIZE = 10 // 每批帧数
 
 export interface Session {
   recordTelemetry(t: Telemetry): void
@@ -17,6 +19,7 @@ export function createSession(): Session {
   const startTime = Date.now() / 1000
   const telemetry: Array<{ ts: number; speed: number; steering: number }> = []
   const frameMetas: Array<{ id: number; ts: number; image: string; depth: string }> = []
+  const pendingFrames: Array<{ id: number; image_name: string; depth_name: string; image_data: string; depth_data: string }> = []
   let frameIdx = 0
   let sessionName = ''
   let cancelled = false
@@ -51,24 +54,26 @@ export function createSession(): Session {
       depth: `frames/${depthName}`,
     })
 
-    // 逐帧 POST — 不囤内存
+    pendingFrames.push({
+      id, image_name: imageName, depth_name: depthName,
+      image_data: f.image, depth_data: f.depth_map,
+    })
+
+    if (pendingFrames.length >= BATCH_SIZE) await flushBatch()
+  }
+
+  async function flushBatch() {
+    if (!pendingFrames.length) return
+    const batch = pendingFrames.splice(0)
     try {
-      await saveSessionFrame({
-        session_name: sessionName,
-        frame_id: id,
-        image_name: imageName,
-        depth_name: depthName,
-        image_data: f.image,
-        depth_data: f.depth_map,
-      })
-    } catch {
-      // 单帧失败不中断整个 session
-    }
+      await saveSessionFrame({ session_name: sessionName, frames: batch })
+    } catch { /* 单批失败不中断 */ }
   }
 
   async function finalize(): Promise<void> {
     if (cancelled || !created) return
-    const manifest = {
+    await flushBatch()
+    await saveSessionManifest(sessionName, {
       version: 1,
       start_time: startTime,
       end_time: Date.now() / 1000,
@@ -76,14 +81,14 @@ export function createSession(): Session {
       telemetry_interval_ms: 100,
       telemetry,
       frames: frameMetas,
-    }
-    await saveSessionManifest(sessionName, manifest)
+    })
   }
 
   function cancel(): void {
     cancelled = true
     telemetry.length = 0
     frameMetas.length = 0
+    pendingFrames.length = 0
   }
 
   return { recordTelemetry, recordFrame, finalize, cancel }

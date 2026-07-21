@@ -23,6 +23,17 @@ import type { Telemetry, Frame } from '@/types/data'
 // ---------- 模块级单例状态 ----------
 let telemetryWS: ReturnType<typeof createWSClient> | null = null
 let frameWS: ReturnType<typeof createWSClient> | null = null
+let lastFramePostTime = 0
+const FRAME_POST_INTERVAL = 100  // ms, 10fps 限流
+
+function _canSendFrame(): boolean {
+  const now = performance.now()
+  if (now - lastFramePostTime >= FRAME_POST_INTERVAL) {
+    lastFramePostTime = now
+    return true
+  }
+  return false
+}
 let onTelemetry: ((t: Telemetry) => void) | null = null
 let onFrame: ((f: Frame) => void) | null = null
 let watchersSetup = false
@@ -78,7 +89,7 @@ export function useConnection() {
         const data = parseFrame(raw)
         latestFrame.value = data
         onFrame?.(data)
-        if (modelingActive) postFrame(data).catch(() => {})
+        if (modelingActive && _canSendFrame()) postFrame(data).catch(() => {})
       } catch { /* ignore malformed */ }
     })
     frameWS.connect()

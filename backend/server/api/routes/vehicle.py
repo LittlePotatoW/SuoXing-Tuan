@@ -12,12 +12,35 @@
 # ============================================================
 
 import asyncio
+import logging
 
 from fastapi import APIRouter
 
 import uuid
 
 _last_broadcast_ts = 0.0
+_pool_probe_count = 0
+_pool_logger = logging.getLogger("threadpool")
+
+def _probe_thread_pool() -> None:
+    """探针: 记录默认线程池状态 (每30帧或队列>5时记录)"""
+    global _pool_probe_count
+    _pool_probe_count += 1
+    try:
+        pool = asyncio.get_running_loop()._default_executor
+    except Exception:
+        return
+    if pool is None:
+        return
+    try:
+        qsize = pool._work_queue.qsize()
+        active = sum(1 for t in pool._threads if t.is_alive()) if hasattr(pool, '_threads') else -1
+        max_w = pool._max_workers
+        if _pool_probe_count % 30 == 0 or qsize > 5:
+            _pool_logger.warning("[Pool] queue=%d/%d active=%d max=%d",
+                                qsize, max_w, active, max_w)
+    except Exception:
+        pass
 
 from server.api.schemas.vehicle import (
     TelemetryRequest, PositionResponse, FrameRequest,
@@ -74,6 +97,7 @@ async def post_frame(body: FrameRequest):
 
     loop = asyncio.get_running_loop()
     result = await loop.run_in_executor(None, _proc)
+    _probe_thread_pool()
 
     # 有新的重建结果 → 广播给所有 WebSocket 客户端
     global _last_broadcast_ts

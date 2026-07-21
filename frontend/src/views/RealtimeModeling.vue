@@ -194,10 +194,12 @@ async function stopModeling() {
 }
 
 onUnmounted(() => {
+  setModelingActive(false)
   if (statusTimer) { clearInterval(statusTimer); statusTimer = null }
   if (fallbackTimer) { clearInterval(fallbackTimer); fallbackTimer = null }
   wsDisconnect()
   try { stopSessionSignal() } catch { /* ignore */ }
+  try { stopReportSignal() } catch { /* ignore */ }
 })
 </script>
 

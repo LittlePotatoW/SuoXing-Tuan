@@ -235,27 +235,6 @@ class ReconstructionEngine:
         self._buffer.push(entry)
         self._frame_count_total += 1
 
-        # Session 自动保存：帧文件直接写盘
-        global _session_active, _session_frame_idx, _session_frame_count, _session_last_manifest_save
-        if _session_active and _session_name:
-            _session_frame_idx += 1
-            _session_frame_count += 1
-            frames_dir = SESSION_DATA_DIR / _session_name / "frames"
-            try:
-                img_name = f"{str(_session_frame_idx).zfill(5)}.jpg"
-                dep_name = f"{str(_session_frame_idx).zfill(5)}.png"
-                (frames_dir / img_name).write_bytes(base64.b64decode(image))
-                (frames_dir / dep_name).write_bytes(base64.b64decode(depth_map))
-                _session_frame_metas.append({
-                    "id": _session_frame_idx, "ts": timestamp - _session_start_time,
-                    "image": f"frames/{img_name}", "depth": f"frames/{dep_name}",
-                })
-                # 每 10 帧更新一次 manifest
-                if _session_frame_count - _session_last_manifest_save >= 10:
-                    _write_session_manifest()
-                    _session_last_manifest_save = _session_frame_count
-            except Exception:
-                logger.exception("Session 帧写盘失败 frame=%s", frame_id)
 
         logger.debug("push frame %s, buffer=%d/%d, dets=%d",
                      frame_id, len(self._buffer), self._buffer.threshold, len(dets))

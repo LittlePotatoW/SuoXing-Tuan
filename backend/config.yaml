@@ -90,7 +90,8 @@ estimation:
   initial_heading: 0.0         # 初始航向角 (度), 0 = 正前方
   wheelbase: 1.5               # 车辆轴距 (m), 模式1/4 用
   constant_speed: 1.0          # 模式2 默认速度 (m/s)
-  fusion_weight: 0.5           # 模式4 融合权重 (0=纯视觉, 1=纯轮式)
+  fusion_weight: 0.5
+  odometry_frame_skip: 3       # RGB-D里程计跳帧数, 1=每帧, 3=每3帧算一次           # 模式4 融合权重 (0=纯视觉, 1=纯轮式)
   max_history: 10000            # 最大轨迹存储点数
 
 # -------------------------------------------

@@ -55,7 +55,7 @@
 import { ref, onMounted } from 'vue'
 import SceneView from '@/components/three/SceneView.vue'
 import { resetReconstruction } from '@/api/reconstruction'
-import { resetEstimator, postTelemetry, postFrame } from '@/api/vehicle'
+import { resetEstimator, getEstimatorConfig, postTelemetry, postFrame } from '@/api/vehicle'
 import { loadSession } from '@/services/data-loader/local-loader'
 import type { Session } from '@/services/data-loader/local-loader'
 import { listSessions } from '@/api/session'
@@ -144,7 +144,12 @@ async function startReplay() {
       voxel_size: reconDefaults.voxel_size,
       yolo_enabled: yoloOn.value,
     })
-    await resetEstimator({ mode: 'bicycle' })
+    try {
+      const estCfg = await getEstimatorConfig()
+      await resetEstimator({ mode: estCfg.mode })
+    } catch {
+      await resetEstimator({ mode: 'bicycle' })
+    }
   } catch (e) { console.warn('reset reconstruction failed:', e) }
 
   if (saveReport.value) {
