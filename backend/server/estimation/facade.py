@@ -66,15 +66,28 @@ class PositionEstimator:
     # ============================================================
 
     @classmethod
+    def get(cls) -> 'PositionEstimator':
+        """获取当前实例。未初始化时自动用默认配置创建。"""
+        global _instance
+        if _instance is None:
+            cls.create()
+        return _instance
+
+    @classmethod
     def create(cls, mode: str | None = None,
                config: dict | None = None) -> 'PositionEstimator':
+        """创建新实例（先销毁旧的）。mode=None 则用 config 默认值。"""
         global _instance
         with _lock:
-            if _instance is None:
-                if config is None:
-                    from server.config import get_config
-                    config = get_config()
-                _instance = cls(config, mode=mode)
+            if _instance is not None:
+                with _instance._rwlock:
+                    _instance._trajectory.clear()
+            _instance = None
+
+            if config is None:
+                from server.config import get_config
+                config = get_config()
+            _instance = cls(config, mode=mode)
             return _instance
 
     @classmethod
@@ -132,6 +145,7 @@ class PositionEstimator:
         """RGB-D 帧数据入口 (模式3/4)"""
         with self._rwlock:
             if self._mode == 'rgbd':
+                logger.warning("[Estimator] mode=rgbd")
                 self._last_ts = timestamp
                 delta = self._rgbd.update_frame(image, depth_map)
                 if delta:

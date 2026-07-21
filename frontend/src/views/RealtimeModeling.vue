@@ -48,6 +48,7 @@
 import { ref, computed, onUnmounted, watch } from 'vue'
 import SceneView from '@/components/three/SceneView.vue'
 import { resetReconstruction, getReconstructionStatus } from '@/api/reconstruction'
+import { resetEstimator, getEstimatorConfig } from '@/api/vehicle'
 import { useConnectionStore } from '@/stores/connection'
 import { setModelingActive, useConnection } from '@/composables/useConnection'
 import { startReportSignal, stopReportSignal } from '@/api/report'
@@ -147,6 +148,12 @@ async function startModeling() {
       voxel_size: reconDefaults.voxel_size,
       yolo_enabled: yoloOn.value,
     })
+    try {
+      const estCfg = await getEstimatorConfig()
+      await resetEstimator({ mode: estCfg.mode })
+    } catch {
+      await resetEstimator({ mode: 'bicycle' })
+    }
   } catch { /* backend unreachable */ }
 
   if (saveReport.value) {

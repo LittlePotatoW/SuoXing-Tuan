@@ -57,37 +57,44 @@ class RgbdOdometryStrategy:
         try:
             import cv2
             rgb = _decode_jpeg(image_b64)
-            depth = _decode_depth(depth_b64, self._depth_scale)
+            depth = _decode_depth(depth_b64)
             if rgb is None or depth is None:
+                logger.warning("[RGBD-O] 解码失败")
                 return None
 
             if self._prev_rgb is None:
                 self._prev_rgb = rgb
                 self._prev_depth = depth
-                return None  # 第一帧，无历史帧可对比
+                logger.warning("[RGBD-O] 首帧已存储, {}x{}, depth range={:.2f}-{:.2f}m".format(
+                    rgb.shape[1], rgb.shape[0], depth.min(), depth.max()))
+                return None
 
             rgbd1 = self._o3d.geometry.RGBDImage.create_from_color_and_depth(
                 self._o3d.geometry.Image(self._prev_rgb),
                 self._o3d.geometry.Image(self._prev_depth),
-                convert_rgb_to_intensity=False)
+                depth_scale=self._depth_scale, convert_rgb_to_intensity=False)
             rgbd2 = self._o3d.geometry.RGBDImage.create_from_color_and_depth(
                 self._o3d.geometry.Image(rgb),
                 self._o3d.geometry.Image(depth),
-                convert_rgb_to_intensity=False)
+                depth_scale=self._depth_scale, convert_rgb_to_intensity=False)
 
             success, T, _ = self._o3d.pipelines.odometry.compute_rgbd_odometry(
-                rgbd1, rgbd2, self._intrinsic, self._option)
+                rgbd1, rgbd2, self._intrinsic,
+                odo_init=np.eye(4),
+                jacobian=self._o3d.pipelines.odometry.RGBDOdometryJacobianFromHybridTerm(),
+                option=self._option)
 
             self._prev_rgb = rgb
             self._prev_depth = depth
 
             if not success:
+                logger.warning("[RGBD-O] odometry success=False")
                 return None
 
-            # T[0,3]=dx, T[2,3]=dz(前), heading ≈ atan2(T[2,0], T[2,2])
             dx = float(T[0, 3])
             dz = float(T[2, 3])
             dheading = -math.degrees(math.atan2(T[2, 0], T[2, 2]))
+            logger.warning("[RGBD-O] odometry OK: dx={:.3f} dz={:.3f} dh={:.2f}°".format(dx, dz, dheading))
             return dx, dz, dheading
 
         except Exception:
@@ -105,7 +112,7 @@ def _decode_jpeg(b64: str) -> np.ndarray | None:
         return None
 
 
-def _decode_depth(b64: str, scale: float) -> np.ndarray | None:
+def _decode_depth(b64: str) -> np.ndarray | None:
     try:
         import cv2
         data = base64.b64decode(b64)
@@ -113,6 +120,6 @@ def _decode_depth(b64: str, scale: float) -> np.ndarray | None:
         img = cv2.imdecode(arr, cv2.IMREAD_UNCHANGED)
         if img is None:
             return None
-        return img.astype(np.float32) / scale
+        return img.astype(np.float32)
     except Exception:
         return None

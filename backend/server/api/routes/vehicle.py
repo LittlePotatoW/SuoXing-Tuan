@@ -31,7 +31,7 @@ router = APIRouter(prefix="/api/vehicle", tags=["vehicle"])
 @router.post("/telemetry", status_code=200)
 def post_telemetry(body: TelemetryRequest):
     """上报一条遥测数据（速度+转向），更新位置估计器"""
-    est = PositionEstimator.create()
+    est = PositionEstimator.get()
     est.update_telemetry(
         timestamp=body.timestamp,
         speed=body.speed,
@@ -43,7 +43,7 @@ def post_telemetry(body: TelemetryRequest):
 @router.get("/position", response_model=PositionResponse)
 def get_position() -> PositionResponse:
     """查询当前位置"""
-    est = PositionEstimator.create()
+    est = PositionEstimator.get()
     pos: Position = est.get_position()
     return PositionResponse(
         timestamp=pos.timestamp,
@@ -60,7 +60,7 @@ async def post_frame(body: FrameRequest):
 
     def _proc():
         # 位置估计器 (模式3/4 需要帧数据)
-        est = PositionEstimator.create()
+        est = PositionEstimator.get()
         est.update_frame(body.timestamp, body.image, body.depth_map)
 
         # 重建引擎
@@ -103,7 +103,6 @@ async def post_frame(body: FrameRequest):
 @router.post("/estimator/reset", status_code=200)
 def reset_estimator(body: EstimatorResetRequest):
     """重置位置估计器，可选切换模式和参数"""
-    PositionEstimator.stop()
     est = PositionEstimator.create(mode=body.mode)
     if body.wheelbase is not None:
         est._wheelbase = body.wheelbase
@@ -124,6 +123,6 @@ def reset_estimator(body: EstimatorResetRequest):
 @router.get("/estimator/config", response_model=EstimatorConfigResponse)
 def get_estimator_config() -> EstimatorConfigResponse:
     """查询位置估计器当前配置和状态"""
-    est = PositionEstimator.create()
+    est = PositionEstimator.get()
     cfg = est.get_config()
     return EstimatorConfigResponse(**cfg)

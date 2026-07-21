@@ -201,7 +201,7 @@ class ReconstructionEngine:
         if dets:
             try:
                 from server.estimation import PositionEstimator
-                estimator = PositionEstimator.create()
+                estimator = PositionEstimator.get()
                 pos = estimator.get_position_at(timestamp)
                 from server.config import get_config
                 ext_cfg = get_config().get('camera_to_vehicle', {})
@@ -328,7 +328,7 @@ class ReconstructionEngine:
 
             # 获取每帧的位置 + 直接用预计算点云（push_frame 已解码）
             from server.estimation import PositionEstimator
-            estimator = PositionEstimator.create()
+            estimator = PositionEstimator.get()
 
             positions = []
             camera_trail = []
