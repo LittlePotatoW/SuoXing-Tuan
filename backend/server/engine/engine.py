@@ -427,6 +427,22 @@ class ReconstructionEngine:
                         self._cumulative_defects.append(d)
                 logger.info("累积缺陷: %d (本批 %d)", len(self._cumulative_defects), len(detections))
 
+            # 删除孤儿图（去重后不再被引用的标注图）
+            if _current_report_name:
+                try:
+                    surviving = set()
+                    for d in self._cumulative_defects:
+                        img = d.get('annotated_image', '')
+                        if img:
+                            surviving.add(Path(img).name)
+                    img_dir = REPORT_DATA_DIR / _current_report_name / "images"
+                    if img_dir.exists():
+                        for f in img_dir.iterdir():
+                            if f.is_file() and f.name not in surviving:
+                                f.unlink()
+                except Exception:
+                    pass
+
             # 自动写 Report metadata（后端驱动）
             if _current_report_name and self._cumulative_defects:
                 try:

@@ -104,10 +104,10 @@ def get_result(since: float | None = Query(None,
 @router.post("/reset", status_code=200)
 def reset_reconstruction(body: ReconResetRequest):
     """重置重建引擎，可选改参数"""
-    from server.engine import ReconstructionEngine, set_report_name
-    print(f"[reset-probe] report_name={body.report_name!r} yolo={body.yolo_enabled!r}")
+    from server.engine import ReconstructionEngine, set_report_name, clear_report_name
+    clear_report_name()
     ReconstructionEngine.stop()
-    ReconstructionEngine.create(
+    eng = ReconstructionEngine.create(
         mode=body.mode,
         frame_threshold=body.frame_threshold,
         voxel_size=body.voxel_size,
@@ -115,10 +115,9 @@ def reset_reconstruction(body: ReconResetRequest):
         yolo_enabled=(body.yolo_enabled
                       if body.yolo_enabled is not None else True),
     )
+    eng._cumulative_defects = []
     if body.report_name:
         set_report_name(body.report_name)
-    else:
-        print("[reset-probe] report_name is falsy, set_report_name NOT called")
     engine = ReconstructionEngine.create()
     return {"status": "ok", "mode": engine._mode}
 
