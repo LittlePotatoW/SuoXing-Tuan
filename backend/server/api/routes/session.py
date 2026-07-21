@@ -2,10 +2,11 @@
 # backend/server/api/routes/session.py
 # Session 保存/列举/加载 + 帧文件服务
 #
-# 增量保存模式（参照 Report）:
-#   POST /create  创建 session 目录 + 初始 manifest
-#   POST /frame   逐帧写盘 (image.jpg + depth.png)
-#   POST /save    更新 manifest (帧文件已由 /frame 写入)
+# 自动保存模式（后端驱动）:
+#   POST /start   前端发信号 → 引擎自动逐帧写盘
+#   POST /stop    前端发信号 → 引擎写最终 manifest
+# 旧接口保留兼容:
+#   POST /create  /frame  /save
 # ============================================================
 
 import base64
@@ -24,6 +25,24 @@ router = APIRouter(prefix="/api/session", tags=["session"])
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent.parent
 SESSION_DIR = PROJECT_ROOT / "Session_Data"
+
+
+@router.post("/start", status_code=200)
+def start_session():
+    """前端信号：开始 Session → 后端引擎自动逐帧写盘"""
+    from datetime import datetime
+    name = f"session_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    from server.engine.engine import set_session_name
+    set_session_name(name)
+    return {"status": "ok", "name": name}
+
+
+@router.post("/stop", status_code=200)
+def stop_session():
+    """前端信号：停止 Session → 写最终 manifest"""
+    from server.engine.engine import finalize_session
+    finalize_session()
+    return {"status": "ok"}
 
 
 @router.post("/create", status_code=200)

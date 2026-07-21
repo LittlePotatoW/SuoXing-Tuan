@@ -6,6 +6,18 @@
 import { httpClient } from '@/network/http-client'
 import type { SessionListItem } from '@/types/api'
 
+/** 发送开始信号 → 后端引擎自动逐帧写盘 */
+export async function startSessionSignal() {
+  const res = await httpClient.post('/api/session/start', null, { timeout: 10000 })
+  return res.data as { status: string; name: string }
+}
+
+/** 发送停止信号 → 后端写最终 manifest */
+export async function stopSessionSignal() {
+  const res = await httpClient.post('/api/session/stop', null, { timeout: 10000 })
+  return res.data as { status: string }
+}
+
 export async function createSession(name: string, startTime: number, telemetryInterval = 100) {
   const res = await httpClient.post('/api/session/create', {
     name, start_time: startTime, telemetry_interval_ms: telemetryInterval,

@@ -60,9 +60,7 @@ export function useReconstructionWS(
         const msg = JSON.parse(event.data)
         if (msg.type === 'rebuild_complete' && msg.data) {
           if (msg.data.mesh_data) {
-            const md = msg.data.mesh_data
-            console.log('[reconWS] mesh_data received: verts=', md.vertex_count, 'faces=', md.face_count, 'vc_len=', md.vertex_colors?.length || 0)
-            onMeshData(md)
+            onMeshData(msg.data.mesh_data)
           }
           if (msg.data.detections && msg.data.detections.length > 0) {
             onCracks(msg.data.detections)

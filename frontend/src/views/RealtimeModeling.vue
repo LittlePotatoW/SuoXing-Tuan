@@ -49,13 +49,11 @@ import { ref, computed, onUnmounted, watch } from 'vue'
 import SceneView from '@/components/three/SceneView.vue'
 import { resetReconstruction, getReconstructionStatus } from '@/api/reconstruction'
 import { useConnectionStore } from '@/stores/connection'
-import { createSession } from '@/services/data-saver/data-saver'
-import type { Session } from '@/services/data-saver/data-saver'
-import { setRecordingHooks, setModelingActive, useConnection } from '@/composables/useConnection'
+import { setModelingActive, useConnection } from '@/composables/useConnection'
 import { saveReport as saveReportApi } from '@/api/report'
+import { startSessionSignal, stopSessionSignal } from '@/api/session'
 import { useReconstructionWS, type MeshData } from '@/composables/useReconstructionWS'
 import { reconDefaults } from '@/config/defaults'
-import type { Telemetry, Frame } from '@/types/data'
 import type { DetectionItem } from '@/types/api'
 
 const connStore = useConnectionStore()
@@ -75,7 +73,6 @@ const frameThreshold = ref(30)
 const defects = ref<DetectionItem[]>([])
 const pointCloudUrl = ref('')
 
-let session: Session | null = null
 let statusTimer: ReturnType<typeof setInterval> | null = null
 let fallbackTimer: ReturnType<typeof setInterval> | null = null
 
@@ -84,11 +81,16 @@ const onMeshData = (data: MeshData) => {
   sceneRef.value?.updateMesh(data)
 }
 const onCracks = (cracks: DetectionItem[]) => {
-  defects.value = cracks
-  sceneRef.value?.updateCracks(cracks)
+  // 累积 + 空间去重（跨批，同一裂缝可能出现在多批中）
+  for (const c of cracks) {
+    if (!_isDup(c, defects.value)) {
+      defects.value.push(c)
+    }
+  }
+  sceneRef.value?.updateCracks(defects.value)
 
-  // 增量保存 metadata（3s 防抖）
-  if (saveReport.value && cracks.length > 0) {
+  // 增量保存 metadata
+  if (saveReport.value && defects.value.length > 0) {
     const now = Date.now()
     if (now - _lastMetaSave > 1000) {
       _lastMetaSave = now
@@ -97,6 +99,19 @@ const onCracks = (cracks: DetectionItem[]) => {
   }
 }
 let _lastMetaSave = 0
+
+function _isDup(c: DetectionItem, existing: DetectionItem[]): boolean {
+  const c3 = c.center_3d
+  if (!c3 || c3.length < 3) return false
+  const r = 0.3  // 去重半径，与后端 crack_dedup_radius 一致
+  for (const e of existing) {
+    const e3 = e.center_3d
+    if (!e3 || e3.length < 3) continue
+    const dx = c3[0] - e3[0]; const dy = c3[1] - e3[1]; const dz = c3[2] - e3[2]
+    if (Math.sqrt(dx * dx + dy * dy + dz * dz) < r) return true
+  }
+  return false
+}
 
 async function _saveMetaNow() {
   const date = new Date().toISOString().slice(0, 10).replace(/-/g, '')
@@ -162,11 +177,7 @@ async function startModeling() {
   } catch { /* backend unreachable */ }
 
   if (saveSession.value) {
-    session = createSession()
-    setRecordingHooks(
-      (t: Telemetry) => { session?.recordTelemetry(t) },
-      (f: Frame) => { session?.recordFrame(f)?.catch(() => {}) },
-    )
+    try { await startSessionSignal() } catch { /* ignore */ }
   }
 
   // 确保车辆 WS 已连接
@@ -190,15 +201,9 @@ async function stopModeling() {
   if (fallbackTimer) { clearInterval(fallbackTimer); fallbackTimer = null }
   wsDisconnect()
 
-  // 保存Session：完成录制
-  if (session) {
-    try {
-      await session.finalize()
-    } catch (e) {
-      console.error('Session finalize 失败:', e)
-    }
-    session = null
-    setRecordingHooks(null, null)
+  // 保存Session：发停止信号 → 后端写最终 manifest
+  if (saveSession.value) {
+    try { await stopSessionSignal() } catch { /* ignore */ }
   }
 
   // 保存Report → POST 到后端写入 Report_Data/
@@ -219,7 +224,7 @@ onUnmounted(() => {
   if (statusTimer) { clearInterval(statusTimer); statusTimer = null }
   if (fallbackTimer) { clearInterval(fallbackTimer); fallbackTimer = null }
   wsDisconnect()
-  if (session) { session.cancel(); session = null }
+  try { stopSessionSignal() } catch { /* ignore */ }
 })
 </script>
 

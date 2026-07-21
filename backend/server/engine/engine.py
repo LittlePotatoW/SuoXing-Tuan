@@ -27,19 +27,49 @@ from server.pointcloud import decode_depth, sample_colors
 # 标注图实时保存目录
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 REPORT_DATA_DIR = _PROJECT_ROOT / "Report_Data"
+SESSION_DATA_DIR = _PROJECT_ROOT / "Session_Data"
+
 # 当前 session 的报告名（开始建模时设置，停止时清空）
 _current_report_name: str = ""
+
+# Session 自动保存状态
+_session_name: str = ""
+_session_active: bool = False
+_session_frame_idx: int = 0
+_session_frame_count: int = 0
+_session_last_manifest_save: int = 0
+_session_start_time: float = 0.0
+_session_telemetry: list = []
+_session_frame_metas: list = []
 
 def set_report_name(name: str) -> None:
     global _current_report_name
     _current_report_name = name
-    img_dir = REPORT_DATA_DIR / name / "images"
-    img_dir.mkdir(parents=True, exist_ok=True)
-    logger.info("[report-save] set_report_name='%s' dir=%s", name, img_dir)
+    if name:
+        (REPORT_DATA_DIR / name / "images").mkdir(parents=True, exist_ok=True)
 
 def clear_report_name() -> None:
     global _current_report_name
     _current_report_name = ""
+
+def set_session_name(name: str) -> None:
+    global _session_name, _session_active, _session_frame_idx
+    global _session_frame_count, _session_last_manifest_save, _session_start_time
+    global _session_telemetry, _session_frame_metas
+    _session_name = name
+    _session_active = True
+    _session_frame_idx = 0
+    _session_frame_count = 0
+    _session_last_manifest_save = 0
+    _session_start_time = time.time()
+    _session_telemetry = []
+    _session_frame_metas = []
+    (SESSION_DATA_DIR / name / "frames").mkdir(parents=True, exist_ok=True)
+
+def clear_session() -> None:
+    global _session_active, _session_name
+    _session_active = False
+    _session_name = ""
 from server.reconstruction import map_frames, fuse
 
 logger = logging.getLogger(__name__)
@@ -84,6 +114,7 @@ class ReconstructionEngine:
         self._frame_count_total: int = 0
         self._engine_lock = threading.Lock()
         self._running: bool = False
+        self._cumulative_defects: list = []  # 跨批累积缺陷列表
 
     # ============================================================
     # 工厂方法
@@ -189,10 +220,6 @@ class ReconstructionEngine:
         pc_colors = None
         if pc is not None and len(pc) > 0:
             pc_colors = sample_colors(image, depth_m)
-            if pc_colors is not None:
-                logger.warning("[color] frame=%s sampled %d colors for %d points", frame_id, len(pc_colors), len(pc))
-            else:
-                logger.warning("[color] frame=%s sample_colors returned None (pc=%d)", frame_id, len(pc))
 
         # 3. 存 buffer（带预计算点云和检测结果）
         entry = FrameEntry(
@@ -206,6 +233,28 @@ class ReconstructionEngine:
         )
         self._buffer.push(entry)
         self._frame_count_total += 1
+
+        # Session 自动保存：帧文件直接写盘
+        global _session_active, _session_frame_idx, _session_frame_count, _session_last_manifest_save
+        if _session_active and _session_name:
+            _session_frame_idx += 1
+            _session_frame_count += 1
+            frames_dir = SESSION_DATA_DIR / _session_name / "frames"
+            try:
+                img_name = f"{str(_session_frame_idx).zfill(5)}.jpg"
+                dep_name = f"{str(_session_frame_idx).zfill(5)}.png"
+                (frames_dir / img_name).write_bytes(base64.b64decode(image))
+                (frames_dir / dep_name).write_bytes(base64.b64decode(depth_map))
+                _session_frame_metas.append({
+                    "id": _session_frame_idx, "ts": timestamp - _session_start_time,
+                    "image": f"frames/{img_name}", "depth": f"frames/{dep_name}",
+                })
+                # 每 10 帧更新一次 manifest
+                if _session_frame_count - _session_last_manifest_save >= 10:
+                    _write_session_manifest()
+                    _session_last_manifest_save = _session_frame_count
+            except Exception:
+                logger.exception("Session 帧写盘失败 frame=%s", frame_id)
 
         logger.debug("push frame %s, buffer=%d/%d, dets=%d",
                      frame_id, len(self._buffer), self._buffer.threshold, len(dets))
@@ -325,9 +374,6 @@ class ReconstructionEngine:
                     logger.warning("compact: %d → ~%d 点", raw_points, raw_points // keep)
                 merged = map_frames(point_clouds, positions, config)
                 result_colors = np.vstack(color_blocks) if color_blocks else None
-                logger.warning("[color] _trigger: %d frames, %d color blocks, result_colors=%s",
-                           len(point_clouds), len(color_blocks),
-                           result_colors.shape if result_colors is not None else None)
                 if merged is None:
                     return
                 previous = (self._latest_result.point_cloud
@@ -363,6 +409,30 @@ class ReconstructionEngine:
                     logger.info("YOLO 去重: %d → %d (radius=%.2fm)", len(all_dets), len(unique), dedup_r)
                     detections = unique
 
+            # 跨批累积 + 去重
+            cross_dedup_r = config.get('reconstruction', {}).get('crack_dedup_radius', 0.3)
+            if detections:
+                for d in detections:
+                    c3 = d.get("center_3d")
+                    dup = False
+                    if c3 and len(c3) >= 3:
+                        for e in self._cumulative_defects:
+                            ec = e.get("center_3d")
+                            if ec and len(ec) >= 3:
+                                if np.linalg.norm(np.array(c3) - np.array(ec)) < cross_dedup_r:
+                                    dup = True
+                                    break
+                    if not dup:
+                        self._cumulative_defects.append(d)
+                logger.info("累积缺陷: %d (本批 %d)", len(self._cumulative_defects), len(detections))
+
+            # 自动写 Report metadata（后端驱动）
+            if _current_report_name and self._cumulative_defects:
+                try:
+                    _write_report_metadata(_current_report_name, self._cumulative_defects)
+                except Exception:
+                    pass
+
             # 表面重建 / TSDF
             surface_result = None
             if is_tsdf:
@@ -388,15 +458,9 @@ class ReconstructionEngine:
             if surface_result:
                 pc_url = surface_result["url"]
                 mesh_data = surface_result["mesh"]
-                logger.warning("[color] surface_result mesh: vc=%s",
-                           'YES' if mesh_data.get('vertex_colors') else 'EMPTY')
             elif result_pc is not None:
                 pc_url = _save_pointcloud(result_pc, config)
                 mesh_data = _build_pointcloud_data(result_pc, result_colors)
-                logger.warning("[color] fallback pointcloud: vc=%s, pc=%d, colors=%s",
-                           'YES' if mesh_data.get('vertex_colors') else 'EMPTY',
-                           len(result_pc),
-                           result_colors.shape if result_colors is not None else None)
             else:
                 logger.warning("重建失败: 无 mesh 无点云")
                 return
@@ -468,3 +532,44 @@ def _write_ply_ascii(filepath: str, pc: np.ndarray) -> None:
         f.write("end_header\n")
         for i in range(n):
             f.write(f"{pc[i, 0]:.6f} {pc[i, 1]:.6f} {pc[i, 2]:.6f}\n")
+
+
+# ---------- Session / Report 写盘辅助 ----------
+
+def _write_session_manifest() -> None:
+    """增量写 manifest.json（追加模式）"""
+    global _session_name, _session_start_time, _session_telemetry, _session_frame_metas, _session_frame_count
+    if not _session_name:
+        return
+    manifest = {
+        "version": 1,
+        "start_time": _session_start_time,
+        "end_time": time.time(),
+        "frame_count": _session_frame_count,
+        "telemetry_interval_ms": 100,
+        "telemetry": _session_telemetry,
+        "frames": _session_frame_metas,
+    }
+    p = SESSION_DATA_DIR / _session_name / "manifest.json"
+    p.write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
+
+
+def finalize_session() -> None:
+    """停止 Session：写最终 manifest 并重置状态"""
+    global _session_active, _session_name
+    if _session_active:
+        _write_session_manifest()
+    _session_active = False
+    _session_name = ""
+
+
+def _write_report_metadata(name: str, defects: list, point_cloud_url: str = "") -> None:
+    """写 Report metadata.json"""
+    meta = {
+        "task_name": name.replace("report_", "").split("_")[0] if name else "",
+        "date": "",
+        "point_cloud_url": point_cloud_url,
+        "defects": defects,
+    }
+    p = REPORT_DATA_DIR / name / "metadata.json"
+    p.write_text(json.dumps(meta, indent=2, ensure_ascii=False), encoding="utf-8")

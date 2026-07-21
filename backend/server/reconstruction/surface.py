@@ -115,12 +115,8 @@ def reconstruct_surface(points: np.ndarray, config: dict,
                 weights /= weights.sum(axis=1, keepdims=True)
                 mesh_colors = np.sum(colors_src[idx] * weights[:, :, None], axis=1)
             mesh.vertex_colors = o3d.utility.Vector3dVector(mesh_colors)
-            logger.warning("[color] KD-tree done: mesh_colors min=%.3f max=%.3f mean=%.3f, first3=%s",
-                          mesh_colors.min(), mesh_colors.max(), mesh_colors.mean(),
-                          mesh_colors[:3].tolist() if len(mesh_colors) >= 3 else 'N/A')
         except ImportError:
-            logger.warning("[color] scipy not installed, skip color transfer")
-            pass
+            pass  # scipy 不可用, 跳过颜色传递
 
     # 7. 导出 PLY (顶点 + 面)
     output_dir = config.get('output', {}).get('point_cloud_dir', 'output')
@@ -138,9 +134,6 @@ def reconstruct_surface(points: np.ndarray, config: dict,
     if mesh.has_vertex_colors():
         vc_arr = (np.clip(np.asarray(mesh.vertex_colors), 0, 1) * 255).astype(np.uint8)
         vc = vc_arr.ravel().tolist()
-        logger.warning("[color] output vc: len=%d, min=%d max=%d, first9=%s",
-                      len(vc), int(vc_arr.min()), int(vc_arr.max()),
-                      vc[:9] if len(vc) >= 9 else vc)
 
     elapsed = (time.perf_counter() - t0) * 1000
     logger.info("表面重建完成: %d verts, %d faces, %s, %.0fms → %s",

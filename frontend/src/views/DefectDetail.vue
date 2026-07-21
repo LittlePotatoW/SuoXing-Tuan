@@ -9,6 +9,12 @@
         <option value="">选择 Report...</option>
         <option v-for="r in reports" :key="r" :value="r">{{ r }}</option>
       </select>
+      <button class="btn" :disabled="!selectedReport || !!exporting" @click="onExport('md')">
+        {{ exporting === 'md' ? '导出中...' : '导出 Markdown' }}
+      </button>
+      <button class="btn" :disabled="!selectedReport || !!exporting" @click="onExport('xlsx')">
+        {{ exporting === 'xlsx' ? '导出中...' : '导出 Excel' }}
+      </button>
     </div>
 
     <div class="main-row">
@@ -44,7 +50,7 @@
 
 <script setup lang="ts">
 import { ref, watch, onMounted } from 'vue'
-import { listReports, loadReport } from '@/api/report'
+import { listReports, loadReport, exportReport } from '@/api/report'
 import { httpClient } from '@/network/http-client'
 
 const selected = ref<any>(null)
@@ -52,6 +58,7 @@ const note = ref('')
 const selectedReport = ref('')
 const reports = ref<string[]>([])
 const defects = ref<any[]>([])
+const exporting = ref<string | null>(null)
 
 async function fetchReports() {
   try {
@@ -87,6 +94,19 @@ watch(selected, (d) => {
 function saveNote() {
   if (selected.value) {
     localStorage.setItem(`defect-note-${selected.value.id}`, note.value)
+  }
+}
+
+async function onExport(format: 'md' | 'xlsx') {
+  if (!selectedReport.value || exporting.value) return
+  exporting.value = format
+  try {
+    await exportReport(selectedReport.value, format)
+    alert(`${format === 'md' ? 'Markdown' : 'Excel'} 已导出到 Report 目录`)
+  } catch {
+    alert('导出失败')
+  } finally {
+    exporting.value = null
   }
 }
 </script>

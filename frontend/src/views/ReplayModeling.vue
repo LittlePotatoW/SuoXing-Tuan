@@ -81,8 +81,21 @@ const onMeshData = (data: MeshData) => {
   sceneRef.value?.updateMesh(data)
 }
 const onCracks = (cracks: DetectionItem[]) => {
-  defects.value = cracks
-  sceneRef.value?.updateCracks(cracks)
+  // 累积 + 空间去重
+  for (const c of cracks) {
+    let dup = false
+    const c3 = c.center_3d
+    if (c3 && c3.length >= 3) {
+      for (const e of defects.value) {
+        const e3 = e.center_3d
+        if (!e3 || e3.length < 3) continue
+        const dx = c3[0] - e3[0]; const dy = c3[1] - e3[1]; const dz = c3[2] - e3[2]
+        if (Math.sqrt(dx * dx + dy * dy + dz * dz) < 0.3) { dup = true; break }
+      }
+    }
+    if (!dup) defects.value.push(c)
+  }
+  sceneRef.value?.updateCracks(defects.value)
 }
 const onTrail = (trail: number[][]) => {
   sceneRef.value?.updateTrail(trail)
@@ -152,8 +165,11 @@ async function startReplay() {
     } catch { /* ignore */ }
   }
 
-  // 保存 Report
-  if (saveReport.value && defects.value.length > 0) {
+  // 等待最后一批重建完成
+  await new Promise(r => setTimeout(r, 5000))
+
+  // 保存 Report（累积 defects，含所有批次）
+  if (saveReport.value && (defects.value.length > 0 || pointCloudUrl.value)) {
     const date = new Date().toISOString().slice(0, 10).replace(/-/g, '')
     const task = taskName.value || selectedSession.value || '未命名'
     const dirName = `report_${task}_${date}`
@@ -164,6 +180,11 @@ async function startReplay() {
       })
     } catch { /* ignore */ }
   }
+
+  // 清理引擎
+  wsDisconnect()
+  replaying.value = false
+  try { await resetReconstruction({}) } catch { /* ignore */ }
 }
 
 </script>

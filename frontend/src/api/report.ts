@@ -20,3 +20,11 @@ export async function loadReport(filename: string) {
   const res = await httpClient.get(`/api/report/${filename}`)
   return res.data as any
 }
+
+export async function exportReport(filename: string, format: 'md' | 'xlsx') {
+  const res = await httpClient.post(`/api/report/${filename}/export`, null, {
+    params: { format },
+    timeout: 30000,
+  })
+  return res.data as { status: string; path: string }
+}
