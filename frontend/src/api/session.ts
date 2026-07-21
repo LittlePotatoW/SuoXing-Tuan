@@ -7,8 +7,8 @@ import { httpClient } from '@/network/http-client'
 import type { SessionListItem } from '@/types/api'
 
 /** 发送开始信号 → 后端引擎自动逐帧写盘 */
-export async function startSessionSignal() {
-  const res = await httpClient.post('/api/session/start', null, { timeout: 10000 })
+export async function startSessionSignal(taskName?: string) {
+  const res = await httpClient.post('/api/session/start', { task_name: taskName || '' }, { timeout: 10000 })
   return res.data as { status: string; name: string }
 }
 

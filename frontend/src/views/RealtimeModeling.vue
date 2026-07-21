@@ -177,7 +177,7 @@ async function startModeling() {
   } catch { /* backend unreachable */ }
 
   if (saveSession.value) {
-    try { await startSessionSignal() } catch { /* ignore */ }
+    try { await startSessionSignal(taskName.value) } catch { /* ignore */ }
   }
 
   // 确保车辆 WS 已连接

@@ -27,6 +27,7 @@ export const useSettingsStore = defineStore('settings', () => {
   const sources = computed(() => ({
     lan: { telemetry: telemetrySource.lan, frame: frameSource.lan },
     server: { telemetry: telemetrySource.server, frame: frameSource.server },
+    direct: { telemetry: telemetrySource.direct, frame: frameSource.direct },
   }))
 
   function applyBackendURL() {

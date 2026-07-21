@@ -10,6 +10,11 @@
       <div class="row">
         <label class="radio"><input type="radio" v-model="netMode" value="lan" /> 局域网直连</label>
         <label class="radio"><input type="radio" v-model="netMode" value="server" /> 服务器中转</label>
+        <label class="radio"><input type="radio" v-model="netMode" value="direct" /> 本地直连</label>
+      </div>
+      <div v-if="netMode === 'direct'" class="direct-hint">
+        本地直连模式：相机 USB 直连此电脑。需先在本机启动 astra_vehicle_server.py。
+        无需遥测数据，位置估计建议使用「匀速直线」模式。
       </div>
       <div class="addr-row">
         <div class="addr-group"><label>遥测源</label> <input class="in" v-model="addr.telemetry" placeholder="IP" /> :<input class="in port" v-model.number="port.telemetry" /></div>
@@ -217,4 +222,5 @@ async function testBackend() {
 .test-btn:hover { background: #888; }
 .ok { color: #27ae60; font-size: 11px; }
 .fail { color: #e74c3c; font-size: 11px; }
+.direct-hint { margin: 8px 0 0 0; padding: 8px 12px; background: #fff3cd; border: 1px solid #ffc107; border-radius: 4px; font-size: 12px; color: #856404; }
 </style>

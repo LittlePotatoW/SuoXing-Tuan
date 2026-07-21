@@ -28,10 +28,12 @@ SESSION_DIR = PROJECT_ROOT / "Session_Data"
 
 
 @router.post("/start", status_code=200)
-def start_session():
+def start_session(body: dict = {}):
     """前端信号：开始 Session → 后端引擎自动逐帧写盘"""
     from datetime import datetime
-    name = f"session_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    task = body.get('task_name', '') if body else ''
+    ts = datetime.now().strftime('%Y%m%d_%H%M%S')
+    name = f"session_{task}_{ts}" if task else f"session_{ts}"
     from server.engine.engine import set_session_name
     set_session_name(name)
     return {"status": "ok", "name": name}

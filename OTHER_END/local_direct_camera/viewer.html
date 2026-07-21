@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Astra Pro 可视化</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{font-family:Segoe UI,sans-serif;background:#1a1a2e;color:#eee;min-height:100vh}
+  .bar{display:flex;align-items:center;gap:10px;padding:8px 14px;background:#16213e;border-bottom:1px solid #0f3460;flex-wrap:wrap;font-size:13px}
+  .bar input{width:190px;padding:5px 8px;border:1px solid #0f3460;border-radius:4px;background:#1a1a2e;color:#eee;font-size:13px}
+  .bar button{padding:5px 14px;border:none;border-radius:4px;cursor:pointer;font-size:13px;font-weight:600}
+  .btn{cursor:pointer;padding:5px 14px;border:none;border-radius:4px;font-weight:600;font-size:13px}
+  .btn-off{background:#0f3460;color:#e94560}
+  .btn-on{background:#1b4332;color:#52b788}
+  .status{font-size:12px;padding:3px 8px;border-radius:8px}
+  .ok{background:#1b4332;color:#52b788}
+  .err{background:#3d0000;color:#ff6b6b}
+  .wait{background:#333;color:#aaa}
+  .main{display:flex;gap:10px;padding:10px;height:calc(100vh - 100px)}
+  .panel{flex:1;display:flex;flex-direction:column;background:#16213e;border-radius:8px;overflow:hidden;position:relative}
+  .panel h3{padding:6px 10px;font-size:13px;background:#0f3460}
+  .panel canvas{width:100%;flex:1}
+  .foot{display:flex;gap:14px;padding:6px 14px;font-size:12px;color:#aaa;background:#16213e;border-top:1px solid #0f3460;flex-wrap:wrap}
+  .v{color:#e94560;font-weight:600}
+</style>
+</head>
+<body>
+
+<div class="bar">
+  <input id="url" value="ws://127.0.0.1:8002">
+  <button id="btn" class="btn btn-off" onclick="toggle()">连接</button>
+  <span id="st" class="status wait">未连接</span>
+</div>
+
+<div class="main">
+  <div class="panel"><h3>RGB</h3><canvas id="cRgb"></canvas></div>
+  <div class="panel"><h3>深度 (蓝=近 红=远)</h3><canvas id="cDepth"></canvas></div>
+</div>
+
+<div class="foot">
+  <span>帧:<span class="v" id="fc">0</span></span>
+  <span>FPS:<span class="v" id="fps">0</span></span>
+  <span>延迟:<span class="v" id="lat">0</span>ms</span>
+  <span>JPEG:<span class="v" id="rs">0</span>KB</span>
+  <span>深度PNG:<span class="v" id="ds">0</span>KB</span>
+  <span>范围:<span class="v" id="dr">-</span>mm</span>
+</div>
+
+<script>
+const ctxRgb = document.getElementById('cRgb').getContext('2d');
+const ctxDepth = document.getElementById('cDepth').getContext('2d');
+
+let ws=null, fc=0, fpsC=0, fpsT=Date.now(), hasWarned=false;
+
+function resize(){
+  const r0=document.getElementById('cRgb').parentElement.getBoundingClientRect();
+  document.getElementById('cRgb').width=r0.width-4;
+  document.getElementById('cRgb').height=r0.height-30;
+  const r1=document.getElementById('cDepth').parentElement.getBoundingClientRect();
+  document.getElementById('cDepth').width=r1.width-4;
+  document.getElementById('cDepth').height=r1.height-30;
+}
+window.addEventListener('resize',resize); resize();
+
+function cmap(v,lo,hi){
+  if(v<=0||lo>=hi)return[0,0,0,255];
+  const t=Math.max(0,Math.min(1,(v-lo)/(hi-lo)));
+  let r,g,b;
+  if(t<.25){r=0;g=0;b=t/.25}
+  else if(t<.5){r=0;g=(t-.25)/.25;b=1}
+  else if(t<.75){r=(t-.5)/.25;g=1;b=1-(t-.5)/.25}
+  else{r=1;g=1-(t-.75)/.25;b=0}
+  return[r*255|0,g*255|0,b*255|0,255];
+}
+
+// ── 16-bit PNG → Uint16Array using pako-like inflate ──
+async function decodeDepthPNG(b64){
+  const raw=new Uint8Array(atob(b64).split('').map(c=>c.charCodeAt(0)));
+  let w=0,h=0,bd=0,ct=0;
+  const idats=[];
+
+  // Parse chunks
+  let p=8;
+  while(p<raw.length){
+    const len=(raw[p]<<24)|(raw[p+1]<<16)|(raw[p+2]<<8)|raw[p+3];
+    const typ=String.fromCharCode(raw[p+4],raw[p+5],raw[p+6],raw[p+7]);
+    if(typ==='IHDR'){
+      w=(raw[p+8]<<24)|(raw[p+9]<<16)|(raw[p+10]<<8)|raw[p+11];
+      h=(raw[p+12]<<24)|(raw[p+13]<<16)|(raw[p+14]<<8)|raw[p+15];
+      bd=raw[p+16]; ct=raw[p+17];
+    }else if(typ==='IDAT'){
+      idats.push(raw.slice(p+8,p+8+len));
+    }else if(typ==='IEND') break;
+    p+=12+len;
+  }
+
+  // Merge IDATs
+  const merged=new Uint8Array(idats.reduce((s,c)=>s+c.length,0));
+  let off=0;
+  for(const c of idats){merged.set(c,off);off+=c.length;}
+
+  // Inflate using DecompressionStream (zlib = 2-byte header + raw deflate)
+  // Skip the 2-byte zlib header (CMF+FLG)
+  const rawDeflate=merged.slice(2);
+  const ds=new DecompressionStream('deflate-raw');
+  const writer=ds.writable.getWriter();
+  const reader=ds.readable.getReader();
+  writer.write(rawDeflate);
+  writer.close();
+
+  const chunks=[];
+  while(true){
+    const{value,done}=await reader.read();
+    if(done) break;
+    chunks.push(new Uint8Array(value));
+  }
+  const total=chunks.reduce((s,c)=>s+c.length,0);
+  const rawData=new Uint8Array(total);
+  off=0;
+  for(const c of chunks){rawData.set(c,off);off+=c.length;}
+
+  // Unfilter
+  const bpp=(bd===16&&(ct===0||ct===4))?2:1;
+  const stride=w*bpp+1;
+  const depth16=new Uint16Array(w*h);
+  let dmin=65535,dmax=0;
+
+  for(let y=0;y<h;y++){
+    const rowStart=y*stride;
+    const filter=rawData[rowStart];
+    for(let x=0;x<w;x++){
+      const idx=rowStart+1+x*bpp;
+      let val;
+      if(bpp===2){
+        val=(rawData[idx]<<8)|rawData[idx+1];
+      }else{
+        val=rawData[idx];
+      }
+      // Sub filter (type 1)
+      if(filter===1&&x>0){
+        if(bpp===2){
+          val=(val+((rawData[idx-2]<<8)|rawData[idx-1]))&0xFFFF;
+        }else{
+          val=(val+rawData[idx-1])&0xFF;
+        }
+      }
+      depth16[y*w+x]=val;
+      if(val>0){if(val<dmin)dmin=val;if(val>dmax)dmax=val;}
+    }
+  }
+  if(dmin>dmax){dmin=0;dmax=2000;}
+  return{depth16,w,h,dmin,dmax};
+}
+
+// ── Fallback: browser native PNG decode (8-bit precision loss) ──
+function decodeDepthFallback(b64){
+  return new Promise((resolve)=>{
+    const img=new Image();
+    img.onload=()=>{
+      const c=document.createElement('canvas');
+      c.width=img.width; c.height=img.height;
+      const cx=c.getContext('2d');
+      cx.drawImage(img,0,0);
+      const px=cx.getImageData(0,0,c.width,c.height);
+      const d16=new Uint16Array(c.width*c.height);
+      let dmin=65535,dmax=0;
+      for(let i=0;i<d16.length;i++){
+        const r=px.data[i*4],g=px.data[i*4+1];
+        const val=(r<<8)|g;
+        d16[i]=val;
+        if(val>0){if(val<dmin)dmin=val;if(val>dmax)dmax=val;}
+      }
+      if(dmin>dmax){dmin=0;dmax=2000;}
+      resolve({depth16:d16,w:img.width,h:img.height,dmin,dmax});
+    };
+    img.src='data:image/png;base64,'+b64;
+  });
+}
+
+// ── Render ──
+async function render(msg){
+  const now=Date.now(); fc++;
+  fpsC++;
+  if(now-fpsT>=1000){document.getElementById('fps').textContent=fpsC;fpsC=0;fpsT=now;}
+  document.getElementById('lat').textContent=((now/1000-msg.timestamp)*1000|0);
+  document.getElementById('fc').textContent=fc;
+  document.getElementById('rs').textContent=(msg.image.length*0.75/1024)|0;
+
+  // RGB
+  const img=new Image();
+  img.onload=()=>ctxRgb.drawImage(img,0,0,document.getElementById('cRgb').width,document.getElementById('cRgb').height);
+  img.src='data:image/jpeg;base64,'+msg.image;
+
+  // Depth: try 16-bit decode first, fallback to 8-bit
+  try{
+    const r=await decodeDepthPNG(msg.depth_map);
+    displayDepth(r.depth16,r.w,r.h,r.dmin,r.dmax,msg.depth_map.length);
+  }catch(e){
+    if(!hasWarned){console.warn('16-bit decode failed, using 8-bit fallback:',e.message);hasWarned=true;}
+    try{
+      const r=await decodeDepthFallback(msg.depth_map);
+      displayDepth(r.depth16,r.w,r.h,r.dmin,r.dmax,msg.depth_map.length);
+    }catch(e2){
+      console.error('Depth fallback failed:',e2);
+    }
+  }
+}
+
+function displayDepth(depth16,w,h,dmin,dmax,pngLen){
+  document.getElementById('ds').textContent=(pngLen*0.75/1024)|0;
+  document.getElementById('dr').textContent=dmin+'-'+dmax;
+
+  const out=ctxDepth.createImageData(w,h);
+  for(let i=0;i<depth16.length;i++){
+    const c=cmap(depth16[i],dmin,dmax);
+    const j=i*4;
+    out.data[j]=c[0];out.data[j+1]=c[1];out.data[j+2]=c[2];out.data[j+3]=c[3];
+  }
+  ctxDepth.putImageData(out,0,0);
+}
+
+// ── WebSocket ──
+function toggle(){if(ws&&ws.readyState===WebSocket.OPEN){ws.close();return;}connect();}
+
+function connect(){
+  const url=document.getElementById('url').value.trim();
+  if(!url)return;
+  setSt('wait','连接中...');
+  ws=new WebSocket(url);
+  ws.onopen=()=>{
+    setSt('ok','已连接');
+    document.getElementById('btn').className='btn btn-on';
+    document.getElementById('btn').textContent='断开';
+  };
+  ws.onclose=e=>{
+    setSt('err','断开 code='+e.code);
+    document.getElementById('btn').className='btn btn-off';
+    document.getElementById('btn').textContent='连接';
+    ws=null;
+  };
+  ws.onerror=()=>setSt('err','错误');
+  ws.onmessage=e=>{
+    try{const m=JSON.parse(e.data);handleMsg(m);}catch(_){}
+  };
+}
+
+function setSt(css,txt){const el=document.getElementById('st');el.textContent=txt;el.className='status '+css;}
+function handleMsg(m){
+  if(m.type==='frame') render(m);
+  else if(m.type==='ping') ws.send(JSON.stringify({type:'pong'}));
+}
+</script>
+</body>
+</html>

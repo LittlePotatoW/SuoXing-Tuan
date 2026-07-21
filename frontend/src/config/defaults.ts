@@ -13,8 +13,8 @@ import configRaw from '../../config.yaml?raw'
 
 interface Config {
   network: { mode: string }
-  telemetry: { lan: { host: string; port: number }; server: { host: string; port: number } }
-  frame: { lan: { host: string; port: number }; server: { host: string; port: number } }
+  telemetry: { lan: { host: string; port: number }; server: { host: string; port: number }; direct: { host: string; port: number } }
+  frame: { lan: { host: string; port: number }; server: { host: string; port: number }; direct: { host: string; port: number } }
   backend: { host: string; port: number }
   reconstruction: { mode: string; frame_threshold: number; voxel_size: number; method: string }
   estimation: {
@@ -36,7 +36,7 @@ interface Config {
 
 const _config: Config = parseYaml(configRaw) as Config
 
-export const NETWORK_MODE = { LAN: 'lan', SERVER: 'server' } as const
+export const NETWORK_MODE = { LAN: 'lan', SERVER: 'server', DIRECT: 'direct' } as const
 export type NetworkMode = typeof NETWORK_MODE[keyof typeof NETWORK_MODE]
 
 export const telemetrySource = _config.telemetry

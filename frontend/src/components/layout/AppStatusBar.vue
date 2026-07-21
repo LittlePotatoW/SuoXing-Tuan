@@ -48,13 +48,13 @@
     </span>
 
     <span class="spacer"></span>
-    <span class="mode-label">{{ settings.mode === 'lan' ? '局域网直连' : '服务器中转' }}</span>
+    <span class="mode-label">{{ modeLabel }}</span>
     <button class="btn" @click="toggleMode">切换</button>
   </header>
 </template>
 
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { ref, watch, computed } from 'vue'
 import { useConnection } from '@/composables/useConnection'
 import { useConnectionStore } from '@/stores/connection'
 import { useSettingsStore } from '@/stores/settings'
@@ -65,6 +65,15 @@ const settings = useSettingsStore()
 const connStore = useConnectionStore()
 const { connectAll, disconnectAll } = useConnection()
 const { devices, scanning, progress, subnet, scan } = useLanScan()
+
+const modeLabel = computed(() => {
+  switch (settings.mode) {
+    case 'lan': return '局域网直连'
+    case 'server': return '服务器中转'
+    case 'direct': return '本地直连'
+    default: return settings.mode
+  }
+})
 
 const connected = ref(false)
 const showScan = ref(false)
@@ -87,7 +96,9 @@ function onSelectDevice(d: LanDevice) {
 }
 
 function toggleMode() {
-  settings.switchMode(settings.mode === 'lan' ? 'server' : 'lan')
+  const order: Array<'lan' | 'server' | 'direct'> = ['lan', 'server', 'direct']
+  const idx = order.indexOf(settings.mode)
+  settings.switchMode(order[(idx + 1) % order.length])
 }
 </script>
 
