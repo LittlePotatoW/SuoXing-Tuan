@@ -59,7 +59,7 @@ import { resetEstimator, postTelemetry, postFrame } from '@/api/vehicle'
 import { loadSession } from '@/services/data-loader/local-loader'
 import type { Session } from '@/services/data-loader/local-loader'
 import { listSessions } from '@/api/session'
-import { saveReport as saveReportApi } from '@/api/report'
+import { startReportSignal, stopReportSignal } from '@/api/report'
 import { useReconstructionWS, type MeshData } from '@/composables/useReconstructionWS'
 import { reconDefaults } from '@/config/defaults'
 import type { DetectionItem } from '@/types/api'
@@ -135,8 +135,6 @@ async function startReplay() {
   selected.value = null
 
   try {
-    const date = new Date().toISOString().slice(0, 10).replace(/-/g, '')
-    const reportDir = saveReport.value ? `report_${taskName.value || selectedSession.value || '未命名'}_${date}` : ''
     let c: any = {}
     try { c = JSON.parse(localStorage.getItem('suoxingtuan_recon_config') || '{}') } catch {}
     await resetReconstruction({
@@ -145,12 +143,14 @@ async function startReplay() {
       frame_threshold: c.frame_threshold ?? reconDefaults.frame_threshold,
       voxel_size: reconDefaults.voxel_size,
       yolo_enabled: yoloOn.value,
-      report_name: reportDir || null,
     })
     await resetEstimator({ mode: 'bicycle' })
   } catch (e) { console.warn('reset reconstruction failed:', e) }
 
-  // 先连 WebSocket 再发数据，避免漏掉早期的 rebuild_complete
+  if (saveReport.value) {
+    try { await startReportSignal(taskName.value || selectedSession.value) } catch { /* ignore */ }
+  }
+
   wsConnect()
 
   for (const t of session.telemetryList) {
@@ -168,17 +168,8 @@ async function startReplay() {
   // 等待最后一批重建完成
   await new Promise(r => setTimeout(r, 5000))
 
-  // 保存 Report（累积 defects，含所有批次）
-  if (saveReport.value && (defects.value.length > 0 || pointCloudUrl.value)) {
-    const date = new Date().toISOString().slice(0, 10).replace(/-/g, '')
-    const task = taskName.value || selectedSession.value || '未命名'
-    const dirName = `report_${task}_${date}`
-    try {
-      await saveReportApi({
-        filename: `${dirName}.json`,
-        data: { task_name: task, date, point_cloud_url: pointCloudUrl.value, defects: defects.value },
-      })
-    } catch { /* ignore */ }
+  if (saveReport.value) {
+    try { await stopReportSignal() } catch { /* ignore */ }
   }
 
   // 清理引擎

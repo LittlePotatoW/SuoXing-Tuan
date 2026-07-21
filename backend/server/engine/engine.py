@@ -564,13 +564,27 @@ def finalize_session() -> None:
     _session_name = ""
 
 
+def finalize_report() -> None:
+    """停止 Report：清标志位（目录和图片由引擎维护）"""
+    clear_report_name()
+
+
 def _write_report_metadata(name: str, defects: list, point_cloud_url: str = "") -> None:
     """写 Report metadata.json"""
+    # 字段规范化: annotated_image → image（DefectDetail 读 image 字段）
+    normalized = []
+    for d in defects:
+        dd = dict(d)
+        ai = dd.pop('annotated_image', None) or dd.pop('annotatedImage', None)
+        if ai:
+            dd['image'] = ai
+        normalized.append(dd)
+
     meta = {
         "task_name": name.replace("report_", "").split("_")[0] if name else "",
         "date": "",
         "point_cloud_url": point_cloud_url,
-        "defects": defects,
+        "defects": normalized,
     }
     p = REPORT_DATA_DIR / name / "metadata.json"
     p.write_text(json.dumps(meta, indent=2, ensure_ascii=False), encoding="utf-8")

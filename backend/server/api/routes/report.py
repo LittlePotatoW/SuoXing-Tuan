@@ -53,6 +53,30 @@ def load_report(name: str):
 
 
 # ============================================================
+# 信号接口（后端驱动保存）
+# ============================================================
+
+@router.post("/start", status_code=200)
+def start_report(body: dict = {}):
+    """前端信号：开始 Report → 引擎自动写标注图 + metadata"""
+    from datetime import datetime
+    task = body.get('task_name', '') if body else ''
+    date = datetime.now().strftime('%Y%m%d')
+    name = f"report_{task}_{date}" if task else f"report_{date}"
+    from server.engine.engine import set_report_name
+    set_report_name(name)
+    return {"status": "ok", "name": name}
+
+
+@router.post("/stop", status_code=200)
+def stop_report():
+    """前端信号：停止 Report → 清标志位"""
+    from server.engine.engine import clear_report_name
+    clear_report_name()
+    return {"status": "ok"}
+
+
+# ============================================================
 # 导出
 # ============================================================
 

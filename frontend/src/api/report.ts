@@ -21,6 +21,16 @@ export async function loadReport(filename: string) {
   return res.data as any
 }
 
+export async function startReportSignal(taskName?: string) {
+  const res = await httpClient.post('/api/report/start', { task_name: taskName || '' }, { timeout: 10000 })
+  return res.data as { status: string; name: string }
+}
+
+export async function stopReportSignal() {
+  const res = await httpClient.post('/api/report/stop', null, { timeout: 10000 })
+  return res.data as { status: string }
+}
+
 export async function exportReport(filename: string, format: 'md' | 'xlsx') {
   const res = await httpClient.post(`/api/report/${filename}/export`, null, {
     params: { format },

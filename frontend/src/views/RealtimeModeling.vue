@@ -50,7 +50,7 @@ import SceneView from '@/components/three/SceneView.vue'
 import { resetReconstruction, getReconstructionStatus } from '@/api/reconstruction'
 import { useConnectionStore } from '@/stores/connection'
 import { setModelingActive, useConnection } from '@/composables/useConnection'
-import { saveReport as saveReportApi } from '@/api/report'
+import { startReportSignal, stopReportSignal } from '@/api/report'
 import { startSessionSignal, stopSessionSignal } from '@/api/session'
 import { useReconstructionWS, type MeshData } from '@/composables/useReconstructionWS'
 import { reconDefaults } from '@/config/defaults'
@@ -81,48 +81,24 @@ const onMeshData = (data: MeshData) => {
   sceneRef.value?.updateMesh(data)
 }
 const onCracks = (cracks: DetectionItem[]) => {
-  // 累积 + 空间去重（跨批，同一裂缝可能出现在多批中）
   for (const c of cracks) {
     if (!_isDup(c, defects.value)) {
       defects.value.push(c)
     }
   }
   sceneRef.value?.updateCracks(defects.value)
-
-  // 增量保存 metadata
-  if (saveReport.value && defects.value.length > 0) {
-    const now = Date.now()
-    if (now - _lastMetaSave > 1000) {
-      _lastMetaSave = now
-      _saveMetaNow()
-    }
-  }
 }
-let _lastMetaSave = 0
 
 function _isDup(c: DetectionItem, existing: DetectionItem[]): boolean {
   const c3 = c.center_3d
   if (!c3 || c3.length < 3) return false
-  const r = 0.3  // 去重半径，与后端 crack_dedup_radius 一致
   for (const e of existing) {
     const e3 = e.center_3d
     if (!e3 || e3.length < 3) continue
     const dx = c3[0] - e3[0]; const dy = c3[1] - e3[1]; const dz = c3[2] - e3[2]
-    if (Math.sqrt(dx * dx + dy * dy + dz * dz) < r) return true
+    if (Math.sqrt(dx * dx + dy * dy + dz * dz) < 0.3) return true
   }
   return false
-}
-
-async function _saveMetaNow() {
-  const date = new Date().toISOString().slice(0, 10).replace(/-/g, '')
-  const task = taskName.value || '未命名'
-  const dirName = `report_${task}_${date}`
-  try {
-    await saveReportApi({
-      filename: `${dirName}.json`,
-      data: { task_name: task, date, point_cloud_url: pointCloudUrl.value, defects: defects.value },
-    })
-  } catch { /* ignore */ }
 }
 const onTrail = (trail: number[][]) => {
   sceneRef.value?.updateTrail(trail)
@@ -161,8 +137,6 @@ async function pollStatus() {
 }
 
 async function startModeling() {
-  const date = new Date().toISOString().slice(0, 10).replace(/-/g, '')
-  const reportDir = saveReport.value ? `report_${taskName.value || '未命名'}_${date}` : ''
   try {
     let c: any = {}
     try { c = JSON.parse(localStorage.getItem('suoxingtuan_recon_config') || '{}') } catch {}
@@ -172,15 +146,16 @@ async function startModeling() {
       frame_threshold: c.frame_threshold ?? reconDefaults.frame_threshold,
       voxel_size: reconDefaults.voxel_size,
       yolo_enabled: yoloOn.value,
-      report_name: reportDir || null,
     })
   } catch { /* backend unreachable */ }
 
+  if (saveReport.value) {
+    try { await startReportSignal(taskName.value) } catch { /* ignore */ }
+  }
   if (saveSession.value) {
     try { await startSessionSignal(taskName.value) } catch { /* ignore */ }
   }
 
-  // 确保车辆 WS 已连接
   if (connStore.overall !== 'connected') connectAll()
 
   setModelingActive(true)
@@ -206,17 +181,8 @@ async function stopModeling() {
     try { await stopSessionSignal() } catch { /* ignore */ }
   }
 
-  // 保存Report → POST 到后端写入 Report_Data/
-  if (saveReport.value && (defects.value.length > 0 || pointCloudUrl.value)) {
-    const date = new Date().toISOString().slice(0, 10).replace(/-/g, '')
-    const task = taskName.value || '未命名'
-    const dirName = `report_${task}_${date}`
-    try {
-      await saveReportApi({
-        filename: `${dirName}.json`,
-        data: { task_name: task, date, point_cloud_url: pointCloudUrl.value, defects: defects.value },
-      })
-    } catch { /* 后端不可达 */ }
+  if (saveReport.value) {
+    try { await stopReportSignal() } catch { /* ignore */ }
   }
 }
 
