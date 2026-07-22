@@ -252,8 +252,11 @@ class FusionEstimator(BaseEstimator):
 
                 dx, dz, dh = delta
                 with self._lock:
-                    # EKF 修正
-                    z = np.array([self._x + dx, self._y + dz, self._heading + dh])
+                    # EKF 修正: 相机帧→车辆帧→世界帧
+                    h = math.radians(self._heading)
+                    obs_x = self._x + dz * math.cos(h) + dx * math.sin(h)
+                    obs_y = self._y + dz * math.sin(h) - dx * math.cos(h)
+                    z = np.array([obs_x, obs_y, self._heading + dh])
                     H = np.eye(STATE_DIM)
                     y_res = z - np.array([self._x, self._y, self._heading])
                     S = H @ self._P @ H.T + self._R

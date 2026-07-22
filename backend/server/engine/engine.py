@@ -84,6 +84,7 @@ class _ReconstructionResult:
     timestamp: float
     point_cloud_url: str
     point_cloud: np.ndarray | None = None
+    point_colors: np.ndarray | None = None
     detections: list = field(default_factory=list)
     mesh_data: dict | None = None
     camera_trail: list = field(default_factory=list)
@@ -376,14 +377,36 @@ class ReconstructionEngine:
                             color_blocks[i] = color_blocks[i][::keep]
                     logger.warning("compact: %d → ~%d 点", raw_points, raw_points // keep)
                 merged = map_frames(point_clouds, positions, config)
-                result_colors = np.vstack(color_blocks) if color_blocks else None
+                new_colors = np.vstack(color_blocks) if color_blocks else None
                 if merged is None:
                     return
-                previous = (self._latest_result.point_cloud
-                            if self._latest_result else None)
-                result_pc = fuse(merged, previous,
-                                 mode=self._mode,
+
+                # 拼接旧融合结果（几何+颜色），再一起下采样 → 颜色不丢
+                prev = self._latest_result
+                if (prev and prev.point_cloud is not None
+                        and prev.point_colors is not None
+                        and len(prev.point_colors) == len(prev.point_cloud)):
+                    pre_fuse_geo = np.vstack([prev.point_cloud, merged])
+                    pre_fuse_col = np.vstack([prev.point_colors, new_colors]) if new_colors is not None else prev.point_colors
+                else:
+                    pre_fuse_geo = merged
+                    pre_fuse_col = new_colors
+
+                result_pc = fuse(pre_fuse_geo, None,
+                                 mode='incremental',
                                  voxel_size=self._voxel_size)
+
+                if pre_fuse_col is not None and len(result_pc) > 0:
+                    result_colors = _match_colors_kdtree(result_pc, pre_fuse_geo, pre_fuse_col)
+                    logger.warning("[Engine] 颜色匹配: fused=%d geo=%d colors=%d dtype=%s "
+                                   "min=%s max=%s",
+                                   len(result_pc), len(pre_fuse_geo),
+                                   len(pre_fuse_col), result_colors.dtype,
+                                   result_colors.min(axis=0), result_colors.max(axis=0))
+                else:
+                    result_colors = None
+                    logger.warning("[Engine] 颜色为空: pre_fuse_col=%s result_pc=%d",
+                                   pre_fuse_col is not None, len(result_pc))
 
             # 收集 per-frame YOLO 结果（每个 defect 自带 annotated_image）+ center_3d 空间去重
             detections = []
@@ -469,7 +492,7 @@ class ReconstructionEngine:
                         # merged:   pre-fuse 点云, 与 result_colors 对齐
                         surface_result = reconstruct_surface(
                             result_pc, config,
-                            colors=result_colors, color_ref=merged,
+                            colors=result_colors, color_ref=result_pc,
                         )
                     except Exception:
                         logger.exception("表面重建失败，回退到点云")
@@ -502,10 +525,20 @@ class ReconstructionEngine:
                 timestamp=time.time(),
                 point_cloud_url=pc_url or "",
                 point_cloud=result_pc,
+                point_colors=result_colors,
                 detections=detections,
                 mesh_data=mesh_data,
                 camera_trail=camera_trail,
             )
+
+
+def _match_colors_kdtree(fused: np.ndarray, pre_fuse_geo: np.ndarray,
+                         pre_fuse_col: np.ndarray) -> np.ndarray:
+    """体素降采样后通过 KD-tree 最近邻匹配颜色"""
+    from scipy.spatial import cKDTree
+    tree = cKDTree(pre_fuse_geo)
+    _, idx = tree.query(fused, k=1)
+    return pre_fuse_col[idx]
 
 
 def _save_pointcloud(pc: np.ndarray, config: dict) -> str | None:

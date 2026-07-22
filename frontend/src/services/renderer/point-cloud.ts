@@ -53,6 +53,9 @@ export function addToScene(data: MeshData, sceneMgr: SceneManager): void {
   })
   sceneMgr.cloudGroup.clear()
 
+  console.log('[point-cloud] 收到 mesh: verts=%d colors=%d faces=%d',
+    data.vertices.length, data.vertex_colors?.length || 0, data.faces?.length || 0)
+
   if (hasFaces) {
     // === Mesh 模式 ===
     const geo = new THREE.BufferGeometry()
@@ -86,6 +89,8 @@ export function addToScene(data: MeshData, sceneMgr: SceneManager): void {
     if (hasVC) {
       geo.setAttribute('color', new THREE.BufferAttribute(new Uint8Array(cleanC), 3, true))
     }
+    console.log('[point-cloud] 渲染: cleanV=%d cleanC=%d hasVC=%s',
+      cleanV.length, cleanC.length, hasVC)
     const mat = new THREE.PointsMaterial({
       color: hasVC ? 0xffffff : 0xaaaaaa,
       size: 0.015,

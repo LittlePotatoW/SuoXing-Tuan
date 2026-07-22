@@ -61,6 +61,9 @@ class ConstantEstimator(BaseEstimator):
 
     def get_position_at(self, timestamp: float) -> Position:
         with self._lock:
+            # 回放模式：帧时间戳远早于构造时间 → 自动校准 start_ts
+            if timestamp < self._start_ts - 10:
+                self._start_ts = timestamp
             dt = timestamp - self._start_ts
             if dt <= 0:
                 return Position(timestamp, self._initial_x,

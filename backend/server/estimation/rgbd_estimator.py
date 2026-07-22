@@ -197,8 +197,10 @@ class RgbdEstimator(BaseEstimator):
 
                 with self._lock:
                     h = math.radians(self._heading)
-                    self._x += -dx * math.sin(h) + dz * math.cos(h)
-                    self._y += dx * math.cos(h) + dz * math.sin(h)
+                    # 相机帧 (X右 Z前) → 车辆帧 (X前 Y左): veh_x=dz, veh_y=-dx
+                    # 世界帧: 绕 heading 旋转
+                    self._x += dz * math.cos(h) + dx * math.sin(h)
+                    self._y += dz * math.sin(h) - dx * math.cos(h)
                     self._heading += dh
                     self._last_ts = timestamp
                     self._traj_append(Position(self._last_ts, self._x, self._y, self._heading))
