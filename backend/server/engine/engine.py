@@ -200,9 +200,8 @@ class ReconstructionEngine:
         # 2.5 将 center_3d 从相机坐标变换到世界坐标（对齐 mesh 坐标系）
         if dets:
             try:
-                from server.estimation import PositionEstimator
-                estimator = PositionEstimator.get()
-                pos = estimator.get_position_at(timestamp)
+                from server.estimation import get_manager
+                pos = get_manager().get_position_at(timestamp)
                 from server.config import get_config
                 ext_cfg = get_config().get('camera_to_vehicle', {})
                 ext_rot = ext_cfg.get('rotation', [0.0, 0.0, 0.0])
@@ -326,8 +325,8 @@ class ReconstructionEngine:
             config = get_config()
 
             # 获取每帧的位置 + 直接用预计算点云（push_frame 已解码）
-            from server.estimation import PositionEstimator
-            estimator = PositionEstimator.get()
+            from server.estimation import get_manager
+            estimator = get_manager()
 
             positions = []
             camera_trail = []

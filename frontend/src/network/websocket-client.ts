@@ -44,7 +44,7 @@ export function createWSClient(url: string): WSClient {
   function startHeartbeat() {
     heartbeatTimer = setInterval(() => {
       if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.send('ping')
+        ws.send(JSON.stringify({ type: 'ping' }))
       }
     }, 30000)
   }
@@ -61,7 +61,11 @@ export function createWSClient(url: string): WSClient {
     }
 
     ws.onmessage = (event) => {
-      if (event.data === 'pong') return
+      try {
+        const obj = JSON.parse(event.data)
+        if (obj.type === 'ping') { ws?.send(JSON.stringify({ type: 'pong' })); return }
+        if (obj.type === 'pong') return
+      } catch {}
       messageCallbacks.forEach((fn) => fn(event.data))
     }
 

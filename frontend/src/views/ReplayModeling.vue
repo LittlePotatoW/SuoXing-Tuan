@@ -54,20 +54,18 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import SceneView from '@/components/three/SceneView.vue'
-import { resetReconstruction } from '@/api/reconstruction'
-import { resetEstimator, getEstimatorConfig, postTelemetry, postFrame } from '@/api/vehicle'
+import { postTelemetry, postFrame } from '@/api/vehicle'
 import { loadSession } from '@/services/data-loader/local-loader'
 import type { Session } from '@/services/data-loader/local-loader'
 import { listSessions } from '@/api/session'
-import { startReportSignal, stopReportSignal } from '@/api/report'
 import { useReconstructionWS, type MeshData } from '@/composables/useReconstructionWS'
-import { reconDefaults } from '@/config/defaults'
+import { useModeling } from '@/composables/useModeling'
+import { useEstimationStore } from '@/stores/estimation'
 import type { DetectionItem } from '@/types/api'
 
 const sceneRef = ref<InstanceType<typeof SceneView> | null>(null)
 const sessions = ref<string[]>([])
 const selectedSession = ref('')
-const replaying = ref(false)
 const sentFrames = ref(0)
 const totalFrames = ref(0)
 const selected = ref<DetectionItem | null>(null)
@@ -76,12 +74,16 @@ const yoloOn = ref(true)
 const saveReport = ref(false)
 const taskName = ref('')
 
+const estStore = useEstimationStore()
+
+// 统一建模生命周期
+const { running: replaying, start, stop, setWs } = useModeling({
+  yoloEnabled: yoloOn, saveReport, taskName,
+})
+
 // WebSocket 驱动重建结果接收
-const onMeshData = (data: MeshData) => {
-  sceneRef.value?.updateMesh(data)
-}
+const onMeshData = (data: MeshData) => { sceneRef.value?.updateMesh(data) }
 const onCracks = (cracks: DetectionItem[]) => {
-  // 累积 + 空间去重
   for (const c of cracks) {
     let dup = false
     const c3 = c.center_3d
@@ -97,9 +99,7 @@ const onCracks = (cracks: DetectionItem[]) => {
   }
   sceneRef.value?.updateCracks(defects.value)
 }
-const onTrail = (trail: number[][]) => {
-  sceneRef.value?.updateTrail(trail)
-}
+const onTrail = (trail: number[][]) => { sceneRef.value?.updateTrail(trail) }
 const pointCloudUrl = ref('')
 const annotatedImages = ref<string[]>([])
 const onMeta = (meta: { point_cloud_url?: string; annotated_images?: string[] }) => {
@@ -108,6 +108,7 @@ const onMeta = (meta: { point_cloud_url?: string; annotated_images?: string[] })
 }
 const { connect: wsConnect, disconnect: wsDisconnect } =
   useReconstructionWS(onMeshData, onCracks, onTrail, onMeta)
+setWs(wsConnect, wsDisconnect)
 
 async function fetchSessions() {
   try {
@@ -122,52 +123,23 @@ async function startReplay() {
   if (!selectedSession.value) return
 
   let session: Session
-  try {
-    session = await loadSession(selectedSession.value)
-  } catch {
-    return
-  }
+  try { session = await loadSession(selectedSession.value) } catch { return }
 
-  replaying.value = true
-  sentFrames.value = 0
   totalFrames.value = session.frames.length
+  sentFrames.value = 0
   defects.value = []
   selected.value = null
 
-  try {
-    let c: any = {}
-    try { c = JSON.parse(localStorage.getItem('suoxingtuan_recon_config') || '{}') } catch {}
-    await resetReconstruction({
-      method: c.method || reconDefaults.method,
-      mode: c.mode || reconDefaults.mode,
-      frame_threshold: c.frame_threshold ?? reconDefaults.frame_threshold,
-      voxel_size: reconDefaults.voxel_size,
-      yolo_enabled: yoloOn.value,
-    })
-    try {
-      const estCfg = await getEstimatorConfig()
-      await resetEstimator({
-        mode: estCfg.mode,
-        wheelbase: estCfg.wheelbase,
-        constant_speed: estCfg.constant_speed,
-      })
-    } catch {
-      await resetEstimator({ mode: 'bicycle' })
+  await start()
+
+  // 按模式发送遥测
+  if (estStore.shouldSendTelemetry) {
+    for (const t of session.telemetryList) {
+      try { await postTelemetry(t) } catch { /* ignore */ }
     }
-  } catch (e) { console.warn('reset reconstruction failed:', e) }
-
-  if (saveReport.value) {
-    try { await startReportSignal(taskName.value || selectedSession.value) } catch { /* ignore */ }
   }
 
-  wsConnect()
-
-  console.log('[Replay] telemetry count:', session.telemetryList?.length || 0, 'frames:', session.frames?.length || 0)
-  for (const t of session.telemetryList) {
-    try { await postTelemetry(t) } catch { /* ignore */ }
-  }
-  console.log('[Replay] telemetry done')
-
+  // 帧始终发送（引擎重建需要）
   for (const fi of session.frames) {
     try {
       const frame = await session.readFrame(fi.id)
@@ -176,17 +148,8 @@ async function startReplay() {
     } catch { /* ignore */ }
   }
 
-  // 等待最后一批重建完成
   await new Promise(r => setTimeout(r, 5000))
-
-  if (saveReport.value) {
-    try { await stopReportSignal() } catch { /* ignore */ }
-  }
-
-  // 清理引擎
-  wsDisconnect()
-  replaying.value = false
-  try { await resetReconstruction({}) } catch { /* ignore */ }
+  await stop()
 }
 
 </script>

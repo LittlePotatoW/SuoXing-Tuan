@@ -18,6 +18,7 @@ import { useSettingsStore } from '@/stores/settings'
 import { useConnectionStore } from '@/stores/connection'
 import { useVehicleStore } from '@/stores/vehicle'
 import { postTelemetry, postFrame } from '@/api/vehicle'
+import { useEstimationStore } from '@/stores/estimation'
 import type { Telemetry, Frame } from '@/types/data'
 
 // ---------- 模块级单例状态 ----------
@@ -77,7 +78,7 @@ export function useConnection() {
         const data = parseTelemetry(raw)
         vehicle.updateTelemetry(data.speed, data.steering_angle)
         onTelemetry?.(data)
-        if (modelingActive) postTelemetry(data).catch(() => {})
+        if (modelingActive && useEstimationStore().shouldSendTelemetry) postTelemetry(data).catch(() => {})
       } catch { /* ignore malformed */ }
     })
     telemetryWS.connect()

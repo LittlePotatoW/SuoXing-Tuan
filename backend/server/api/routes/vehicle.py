@@ -46,28 +46,27 @@ from server.api.schemas.vehicle import (
     TelemetryRequest, PositionResponse, FrameRequest,
     EstimatorResetRequest, EstimatorConfigResponse,
 )
-from server.estimation import PositionEstimator, Position
+from server.estimation import Position, get_manager
 
 router = APIRouter(prefix="/api/vehicle", tags=["vehicle"])
 
 
 @router.post("/telemetry", status_code=200)
 def post_telemetry(body: TelemetryRequest):
-    """上报一条遥测数据（速度+转向），更新位置估计器"""
-    est = PositionEstimator.get()
-    est.update_telemetry(
+    """上报一条遥测数据（速度+转向），manager 按模式决定是否转发"""
+    mgr = get_manager()
+    mgr.handle_telemetry(
         timestamp=body.timestamp,
         speed=body.speed,
         steering_angle=body.steering_angle,
     )
-    return {"status": "ok", "mode": est._mode}
+    return {"status": "ok", "mode": mgr.get_config()['mode']}
 
 
 @router.get("/position", response_model=PositionResponse)
 def get_position() -> PositionResponse:
     """查询当前位置"""
-    est = PositionEstimator.get()
-    pos: Position = est.get_position()
+    pos: Position = get_manager().get_position()
     return PositionResponse(
         timestamp=pos.timestamp,
         x=pos.x,
@@ -82,9 +81,8 @@ async def post_frame(body: FrameRequest):
     frame_id = uuid.uuid4().hex[:12]
 
     def _proc():
-        # 位置估计器 (模式3/4 需要帧数据)
-        est = PositionEstimator.get()
-        est.update_frame(body.timestamp, body.image, body.depth_map)
+        # 位置估计器 (manager 按模式决定是否转发帧)
+        get_manager().handle_frame(body.timestamp, body.image, body.depth_map)
 
         # 重建引擎
         from server.engine import ReconstructionEngine
@@ -127,26 +125,20 @@ async def post_frame(body: FrameRequest):
 @router.post("/estimator/reset", status_code=200)
 def reset_estimator(body: EstimatorResetRequest):
     """重置位置估计器，可选切换模式和参数"""
-    est = PositionEstimator.create(mode=body.mode)
-    if body.wheelbase is not None:
-        est._wheelbase = body.wheelbase
-    if body.constant_speed is not None:
-        est._constant_speed = body.constant_speed
-    if body.initial_x is not None:
-        est._initial_x = body.initial_x
-        est._x = body.initial_x
-    if body.initial_y is not None:
-        est._initial_y = body.initial_y
-        est._y = body.initial_y
-    if body.initial_heading is not None:
-        est._initial_heading = body.initial_heading
-        est._heading = body.initial_heading
-    return {"status": "ok", "mode": est._mode}
+    overrides = {
+        'wheelbase': body.wheelbase,
+        'constant_speed': body.constant_speed,
+        'initial_x': body.initial_x,
+        'initial_y': body.initial_y,
+        'initial_heading': body.initial_heading,
+    }
+    overrides = {k: v for k, v in overrides.items() if v is not None}
+    get_manager().create(body.mode, overrides if overrides else None)
+    return {"status": "ok", "mode": get_manager().get_config()['mode']}
 
 
 @router.get("/estimator/config", response_model=EstimatorConfigResponse)
 def get_estimator_config() -> EstimatorConfigResponse:
     """查询位置估计器当前配置和状态"""
-    est = PositionEstimator.get()
-    cfg = est.get_config()
+    cfg = get_manager().get_config()
     return EstimatorConfigResponse(**cfg)

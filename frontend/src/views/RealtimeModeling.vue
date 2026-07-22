@@ -15,7 +15,7 @@
       <label class="toggle"><input type="checkbox" v-model="saveReport" :disabled="modeling" /> 保存Report</label>
       <input class="task-input" v-model="taskName" placeholder="任务名" :disabled="modeling" />
       <span class="spacer"></span>
-      <span class="frame-count">帧: {{ frameCount }}/{{ frameThreshold }}</span>
+      <span class="frame-count">帧: --/--（待实现）</span>
     </div>
 
     <div class="main-row">
@@ -45,23 +45,20 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onUnmounted, watch } from 'vue'
+import { ref, computed, onUnmounted } from 'vue'  // watch 已注释
 import SceneView from '@/components/three/SceneView.vue'
-import { resetReconstruction, getReconstructionStatus } from '@/api/reconstruction'
-import { resetEstimator, getEstimatorConfig } from '@/api/vehicle'
+// import { getReconstructionStatus } from '@/api/reconstruction'  // 轮询已注释
 import { useConnectionStore } from '@/stores/connection'
 import { setModelingActive, useConnection } from '@/composables/useConnection'
-import { startReportSignal, stopReportSignal } from '@/api/report'
 import { startSessionSignal, stopSessionSignal } from '@/api/session'
 import { useReconstructionWS, type MeshData } from '@/composables/useReconstructionWS'
-import { reconDefaults } from '@/config/defaults'
+import { useModeling } from '@/composables/useModeling'
 import type { DetectionItem } from '@/types/api'
 
 const connStore = useConnectionStore()
 const { connectAll } = useConnection()
 
 const sceneRef = ref<InstanceType<typeof SceneView> | null>(null)
-const modeling = ref(false)
 const dataActive = computed(() => connStore.overall === 'connected')
 const yoloOn = ref(true)
 const saveSession = ref(false)
@@ -69,27 +66,27 @@ const saveReport = ref(false)
 const taskName = ref('')
 const selected = ref<DetectionItem | null>(null)
 
-const frameCount = ref(0)
-const frameThreshold = ref(30)
+// const frameCount = ref(0)
+// const frameThreshold = ref(30)
 const defects = ref<DetectionItem[]>([])
 const pointCloudUrl = ref('')
 
-let statusTimer: ReturnType<typeof setInterval> | null = null
-let fallbackTimer: ReturnType<typeof setInterval> | null = null
+// let statusTimer: ReturnType<typeof setInterval> | null = null
+// let fallbackTimer: ReturnType<typeof setInterval> | null = null
+
+// 统一建模生命周期
+const { running: modeling, start, stop, setWs } = useModeling({
+  yoloEnabled: yoloOn, saveReport, taskName,
+})
 
 // WebSocket 驱动的重建结果接收
-const onMeshData = (data: MeshData) => {
-  sceneRef.value?.updateMesh(data)
-}
+const onMeshData = (data: MeshData) => { sceneRef.value?.updateMesh(data) }
 const onCracks = (cracks: DetectionItem[]) => {
   for (const c of cracks) {
-    if (!_isDup(c, defects.value)) {
-      defects.value.push(c)
-    }
+    if (!_isDup(c, defects.value)) defects.value.push(c)
   }
   sceneRef.value?.updateCracks(defects.value)
 }
-
 function _isDup(c: DetectionItem, existing: DetectionItem[]): boolean {
   const c3 = c.center_3d
   if (!c3 || c3.length < 3) return false
@@ -101,109 +98,71 @@ function _isDup(c: DetectionItem, existing: DetectionItem[]): boolean {
   }
   return false
 }
-const onTrail = (trail: number[][]) => {
-  sceneRef.value?.updateTrail(trail)
-}
+const onTrail = (trail: number[][]) => { sceneRef.value?.updateTrail(trail) }
 const onMeta = (meta: { point_cloud_url?: string }) => {
   if (meta.point_cloud_url) pointCloudUrl.value = meta.point_cloud_url
 }
-const { connected: wsConnected, connect: wsConnect, disconnect: wsDisconnect } =
+const { /* connected: wsConnected, */ connect: wsConnect, disconnect: wsDisconnect } =
   useReconstructionWS(onMeshData, onCracks, onTrail, onMeta)
+setWs(wsConnect, wsDisconnect)
 
-// WS 断开 5 秒后启动 HTTP 轮询降级
-watch(wsConnected, (v) => {
-  if (v) {
-    if (fallbackTimer) { clearInterval(fallbackTimer); fallbackTimer = null }
-  } else if (modeling.value) {
-    if (!fallbackTimer) {
-      fallbackTimer = setInterval(fallbackPoll, 3000)
-    }
-  }
-}, { immediate: true })
-
-async function fallbackPoll() {
-  try {
-    const r = await getReconstructionStatus()
-    frameCount.value = r.frame_count
-    frameThreshold.value = r.frame_threshold
-  } catch { /* ignore */ }
-}
-
-async function pollStatus() {
-  try {
-    const st = await getReconstructionStatus()
-    frameCount.value = st.frame_count
-    frameThreshold.value = st.frame_threshold
-  } catch { /* backend unreachable */ }
-}
+// ---------- 轮询已注释（待 WS 推送完善后启用）----------
+// watch(wsConnected, (v) => {
+//   if (v) {
+//     if (fallbackTimer) { clearInterval(fallbackTimer); fallbackTimer = null }
+//   } else if (modeling.value) {
+//     if (!fallbackTimer) fallbackTimer = setInterval(fallbackPoll, 3000)
+//   }
+// }, { immediate: true })
+//
+// async function fallbackPoll() {
+//   try {
+//     const r = await getReconstructionStatus()
+//     frameCount.value = r.frame_count
+//     frameThreshold.value = r.frame_threshold
+//   } catch { /* ignore */ }
+// }
+//
+// async function pollStatus() {
+//   try {
+//     const st = await getReconstructionStatus()
+//     frameCount.value = st.frame_count
+//     frameThreshold.value = st.frame_threshold
+//   } catch { /* backend unreachable */ }
+// }
 
 async function startModeling() {
-  try {
-    let c: any = {}
-    try { c = JSON.parse(localStorage.getItem('suoxingtuan_recon_config') || '{}') } catch {}
-    await resetReconstruction({
-      method: c.method || reconDefaults.method,
-      mode: c.mode || reconDefaults.mode,
-      frame_threshold: c.frame_threshold ?? reconDefaults.frame_threshold,
-      voxel_size: reconDefaults.voxel_size,
-      yolo_enabled: yoloOn.value,
-    })
-    try {
-      const estCfg = await getEstimatorConfig()
-      await resetEstimator({
-        mode: estCfg.mode,
-        wheelbase: estCfg.wheelbase,
-        constant_speed: estCfg.constant_speed,
-      })
-    } catch {
-      await resetEstimator({ mode: 'bicycle' })
-    }
-  } catch { /* backend unreachable */ }
-
-  if (saveReport.value) {
-    try { await startReportSignal(taskName.value) } catch { /* ignore */ }
-  }
+  await start()
   if (saveSession.value) {
     try { await startSessionSignal(taskName.value) } catch { /* ignore */ }
   }
-
   if (connStore.overall !== 'connected') connectAll()
-
   setModelingActive(true)
-  modeling.value = true
-  frameCount.value = 0
+  // frameCount.value = 0
   defects.value = []
   pointCloudUrl.value = ''
   selected.value = null
-
-  wsConnect()
-  statusTimer = setInterval(pollStatus, 2000)
+  // statusTimer = setInterval(pollStatus, 2000)
 }
 
 async function stopModeling() {
   setModelingActive(false)
-  modeling.value = false
-  if (statusTimer) { clearInterval(statusTimer); statusTimer = null }
-  if (fallbackTimer) { clearInterval(fallbackTimer); fallbackTimer = null }
-  wsDisconnect()
-
-  // 保存Session：发停止信号 → 后端写最终 manifest
+  // if (statusTimer) { clearInterval(statusTimer); statusTimer = null }
+  // if (fallbackTimer) { clearInterval(fallbackTimer); fallbackTimer = null }
   if (saveSession.value) {
     try { await stopSessionSignal() } catch { /* ignore */ }
   }
-
-  if (saveReport.value) {
-    try { await stopReportSignal() } catch { /* ignore */ }
-  }
+  await stop()
 }
 
 onUnmounted(() => {
   setModelingActive(false)
-  if (statusTimer) { clearInterval(statusTimer); statusTimer = null }
-  if (fallbackTimer) { clearInterval(fallbackTimer); fallbackTimer = null }
-  wsDisconnect()
-  try { stopSessionSignal() } catch { /* ignore */ }
-  try { stopReportSignal() } catch { /* ignore */ }
+  // if (statusTimer) { clearInterval(statusTimer); statusTimer = null }
+  // if (fallbackTimer) { clearInterval(fallbackTimer); fallbackTimer = null }
+  if (saveSession.value) {
+    try { stopSessionSignal() } catch { /* ignore */ }
+  }
+  stop()
 })
 </script>
 

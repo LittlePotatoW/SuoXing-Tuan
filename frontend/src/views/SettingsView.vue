@@ -71,7 +71,6 @@ import { ref, watch, onMounted } from 'vue'
 import { useSettingsStore } from '@/stores/settings'
 import { reconDefaults, estimationDefaults } from '@/config/defaults'
 import { httpClient } from '@/network/http-client'
-import { resetEstimator } from '@/api/vehicle'
 
 const settings = useSettingsStore()
 
@@ -115,15 +114,29 @@ function loadReconConfig() {
   frameThreshold.value = reconDefaults.frame_threshold
 }
 
+const EST_STORAGE = 'suoxingtuan_est_config'
+
 onMounted(async () => {
   loadReconConfig()
+  // 从 localStorage 读取估计参数（上次保存的），没有则用默认值
   try {
-    const estRes = await httpClient.get('/api/vehicle/estimator/config')
-    const cfg = estRes.data
+    const saved = JSON.parse(localStorage.getItem(EST_STORAGE) || '')
+    if (saved && saved.mode) {
+      estMode.value = saved.mode
+      wheelbase.value = saved.wheelbase ?? estimationDefaults.wheelbase
+      constSpeed.value = saved.constant_speed ?? estimationDefaults.constant_speed
+      fusionWeight.value = saved.fusion_weight ?? estimationDefaults.fusion_weight
+      return
+    }
+  } catch { /* 无有效缓存 */ }
+  // 无缓存时从后端读取当前配置
+  try {
+    const cfg = (await httpClient.get('/api/vehicle/estimator/config')).data
     estMode.value = cfg.mode || estimationDefaults.mode
     wheelbase.value = cfg.wheelbase ?? estimationDefaults.wheelbase
     constSpeed.value = cfg.constant_speed ?? estimationDefaults.constant_speed
-  } catch { /* 后端不可达 */ }
+    fusionWeight.value = cfg.fusion_weight ?? estimationDefaults.fusion_weight
+  } catch { /* 后端不可达，用默认值 */ }
 })
 
 // 状态栏改了模式 → 表单跟随
@@ -169,15 +182,14 @@ const constSpeed = ref(estimationDefaults.constant_speed)
 const fusionWeight = ref(estimationDefaults.fusion_weight)
 const estimatorApplied = ref(false)
 
-watch(estimatorApplied, async (v) => {
+watch(estimatorApplied, (v) => {
   if (!v) return
-  try {
-    await resetEstimator({
-      mode: estMode.value,
-      wheelbase: wheelbase.value,
-      constant_speed: constSpeed.value,
-    })
-  } catch { /* 后端不可达 */ }
+  localStorage.setItem(EST_STORAGE, JSON.stringify({
+    mode: estMode.value,
+    wheelbase: wheelbase.value,
+    constant_speed: constSpeed.value,
+    fusion_weight: fusionWeight.value,
+  }))
   estimatorApplied.value = false
 })
 

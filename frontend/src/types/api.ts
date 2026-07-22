@@ -70,6 +70,7 @@ export interface EstimatorResetRequest {
   mode?: string | null
   wheelbase?: number | null
   constant_speed?: number | null
+  fusion_weight?: number | null
   initial_x?: number | null
   initial_y?: number | null
   initial_heading?: number | null
@@ -79,6 +80,7 @@ export interface EstimatorConfigResponse {
   mode: string
   wheelbase: number
   constant_speed: number
+  fusion_weight: number
   initial_x: number
   initial_y: number
   initial_heading: number
