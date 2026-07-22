@@ -112,7 +112,7 @@ def _decode_jpeg(b64: str) -> np.ndarray | None:
         return None
 
 
-def _decode_depth(b64: str) -> np.ndarray | None:
+def _decode_depth(b64: str, min_m: float = 0.6, max_m: float = 8.0) -> np.ndarray | None:
     try:
         import cv2
         data = base64.b64decode(b64)
@@ -120,6 +120,8 @@ def _decode_depth(b64: str) -> np.ndarray | None:
         img = cv2.imdecode(arr, cv2.IMREAD_UNCHANGED)
         if img is None:
             return None
-        return img.astype(np.float32)
+        depth_m = img.astype(np.float32) / 1000.0  # mm → m
+        depth_m[(depth_m < min_m) | (depth_m > max_m)] = 0.0
+        return depth_m * 1000.0  # 回退到 mm（Open3D depth_scale=1000 需要）
     except Exception:
         return None

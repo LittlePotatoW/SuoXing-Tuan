@@ -60,7 +60,7 @@ class PositionEstimator:
         self._odometry_skip = est.get('odometry_frame_skip', 3)
         self._odometry_frame_count = 0
 
-        self._last_ts: float | None = None
+        self._last_ts: float | None = time.time() if self._mode == 'constant' else None
         self._x = self._initial_x
         self._y = self._initial_y
         self._heading = self._initial_heading
@@ -218,14 +218,18 @@ class PositionEstimator:
                 return
             if self._last_ts is None:
                 self._last_ts = timestamp
+                logger.warning("[Estimator] 首条遥测, mode=%s ts=%.3f", self._mode, timestamp)
                 return
 
             delta_t = timestamp - self._last_ts
             self._last_ts = timestamp
 
             if self._mode == 'constant':
+                raw_speed = speed
                 speed = self._constant_speed
                 steering_angle = 0.0
+                logger.warning("[Estimator] constant: raw=%.2f cfg=%.2f use=%.2f dt=%.3fs x=%.2f y=%.2f",
+                              raw_speed, self._constant_speed, speed, delta_t, self._x, self._y)
 
             if self._mode in ('bicycle', 'constant'):
                 self._x, self._y, self._heading = self._bicycle.update(
@@ -246,10 +250,19 @@ class PositionEstimator:
         rgbd 模式: 交换帧数据到 Actor 共享槽, 立即返回
         fusion 模式: 交换数据到共享槽, Actor 内部用 visual 校正
         """
+        logger.warning("[Estimator] update_frame called, mode=%s ts=%.3f", self._mode, timestamp)
+
         if self._mode == 'rgbd':
             with _pending_lock:
                 global _pending_frame
                 _pending_frame = (image, depth_map, timestamp)
+
+        elif self._mode == 'constant':
+            with self._rwlock:
+                if self._last_ts is None:
+                    self._last_ts = timestamp
+                    logger.warning("[Estimator] constant: ref_ts=%.3f speed=%.2f",
+                                  self._last_ts, self._constant_speed)
 
         elif self._mode == 'fusion':
             result = self._fusion.update_visual(
@@ -267,21 +280,26 @@ class PositionEstimator:
     def get_position(self) -> Position:
         with self._rwlock:
             if not self._trajectory:
-                return Position(0.0, self._initial_x, self._initial_y,
+                if self._mode == 'constant' and self._last_ts is not None:
+                    return self._extrapolate(time.time(), self._initial_x, self._initial_y,
+                                            self._initial_heading, self._last_ts)
+                return Position(time.time(), self._initial_x, self._initial_y,
                                 self._initial_heading)
-            return self._trajectory[-1]
+            last = self._trajectory[-1]
+            return self._extrapolate(time.time(), last.x, last.y, last.heading, last.timestamp)
 
     def get_position_at(self, timestamp: float) -> Position:
         with self._rwlock:
             if not self._trajectory:
-                return Position(0.0, self._initial_x, self._initial_y,
-                                self._initial_heading)
+                return self._extrapolate(timestamp, self._initial_x, self._initial_y,
+                                        self._initial_heading, self._last_ts or 0.0)
             timestamps = [p.timestamp for p in self._trajectory]
             idx = bisect_left(timestamps, timestamp)
+            if idx >= len(self._trajectory):
+                last = self._trajectory[-1]
+                return self._extrapolate(timestamp, last.x, last.y, last.heading, last.timestamp)
             if idx == 0:
                 return self._trajectory[0]
-            if idx >= len(self._trajectory):
-                return self._trajectory[-1]
             p0, p1 = self._trajectory[idx - 1], self._trajectory[idx]
             dt = p1.timestamp - p0.timestamp
             if dt < 1e-9:
@@ -308,6 +326,21 @@ class PositionEstimator:
     # ============================================================
     # 内部
     # ============================================================
+
+    def _extrapolate(self, timestamp: float, x: float, y: float,
+                      heading: float, ref_ts: float) -> Position:
+        """constant 模式: 从参考点按时间差外推位置"""
+        if self._mode != 'constant':
+            return Position(timestamp, x, y, heading)
+        dt = timestamp - ref_ts
+        if dt <= 0:
+            return Position(timestamp, x, y, heading)
+        h = math.radians(heading)
+        nx = x + self._constant_speed * math.cos(h) * dt
+        ny = y + self._constant_speed * math.sin(h) * dt
+        logger.warning("[Estimator] extrapolate: ref_ts=%.3f ts=%.3f dt=%.3f (%.2f,%.2f)→(%.2f,%.2f) mode=%s speed=%.2f",
+                      ref_ts, timestamp, dt, x, y, nx, ny, self._mode, self._constant_speed)
+        return Position(timestamp, nx, ny, heading)
 
     def _append(self):
         self._trajectory.append(

@@ -81,7 +81,7 @@ function updateTrail(trail: number[][]): void {
     }
   })
   sceneMgr.trailGroup.clear()
-  // (x, y, z) → (x, z, -y) 世界坐标转 Three.js
+  console.log('[SceneView] trail pts:', trail.length, 'first:', trail[0], 'last:', trail[trail.length - 1])
   const pts = trail.map(p => new THREE.Vector3(p[0], p[2] ?? 0, -(p[1] ?? 0)))
   const geo = new THREE.BufferGeometry().setFromPoints(pts)
   const mat = new THREE.LineBasicMaterial({ color: 0x4fc3f7 })

@@ -146,7 +146,11 @@ async function startReplay() {
     })
     try {
       const estCfg = await getEstimatorConfig()
-      await resetEstimator({ mode: estCfg.mode })
+      await resetEstimator({
+        mode: estCfg.mode,
+        wheelbase: estCfg.wheelbase,
+        constant_speed: estCfg.constant_speed,
+      })
     } catch {
       await resetEstimator({ mode: 'bicycle' })
     }
@@ -158,9 +162,11 @@ async function startReplay() {
 
   wsConnect()
 
+  console.log('[Replay] telemetry count:', session.telemetryList?.length || 0, 'frames:', session.frames?.length || 0)
   for (const t of session.telemetryList) {
     try { await postTelemetry(t) } catch { /* ignore */ }
   }
+  console.log('[Replay] telemetry done')
 
   for (const fi of session.frames) {
     try {

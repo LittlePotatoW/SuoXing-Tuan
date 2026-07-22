@@ -60,7 +60,7 @@ def post_telemetry(body: TelemetryRequest):
         speed=body.speed,
         steering_angle=body.steering_angle,
     )
-    return {"status": "ok"}
+    return {"status": "ok", "mode": est._mode}
 
 
 @router.get("/position", response_model=PositionResponse)

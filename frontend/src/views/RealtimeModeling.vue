@@ -150,7 +150,11 @@ async function startModeling() {
     })
     try {
       const estCfg = await getEstimatorConfig()
-      await resetEstimator({ mode: estCfg.mode })
+      await resetEstimator({
+        mode: estCfg.mode,
+        wheelbase: estCfg.wheelbase,
+        constant_speed: estCfg.constant_speed,
+      })
     } catch {
       await resetEstimator({ mode: 'bicycle' })
     }
