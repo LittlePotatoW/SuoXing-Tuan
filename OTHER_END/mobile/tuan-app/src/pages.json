@@ -1,0 +1,106 @@
+{
+	"pages": [
+		{
+			"path": "pages/login/index",
+			"style": {
+				"navigationBarTitleText": "登录",
+				"navigationStyle": "custom"
+			}
+		},
+		{
+			"path": "pages/index/index",
+			"style": {
+				"navigationBarTitleText": "首页",
+				"navigationStyle": "custom"
+			}
+		},
+		{
+			"path": "pages/control/index",
+			"style": {
+				"navigationBarTitleText": "机器人遥控",
+				"navigationStyle": "custom",
+				"pageOrientation": "portrait"
+			}
+		},
+		{
+			"path": "pages/inspection/index",
+			"style": {
+				"navigationBarTitleText": "巡隧",
+				"navigationStyle": "custom"
+			}
+		},
+		{
+			"path": "pages/inspection/detail",
+			"style": {
+				"navigationBarTitleText": "巡检详情"
+			}
+		},
+		{
+			"path": "pages/profile/index",
+			"style": {
+				"navigationBarTitleText": "我的",
+				"navigationStyle": "custom"
+			}
+		},
+		{
+			"path": "pages/profile/edit",
+			"style": {
+				"navigationBarTitleText": "编辑资料"
+			}
+		},
+		{
+			"path": "pages/password/change",
+			"style": {
+				"navigationBarTitleText": "修改密码",
+				"navigationStyle": "custom"
+			}
+		},
+		{
+			"path": "pages/feedback/index",
+			"style": {
+				"navigationBarTitleText": "意见反馈"
+			}
+		},
+		{
+			"path": "pages/notification/index",
+			"style": {
+				"navigationBarTitleText": "通知",
+				"navigationStyle": "custom"
+			}
+		},
+		{
+			"path": "pages/task/detail",
+			"style": {
+				"navigationBarTitleText": "任务详情",
+				"navigationStyle": "custom"
+			}
+		},
+		{
+			"path": "pages/records/index",
+			"style": {
+				"navigationBarTitleText": "检测记录",
+				"navigationStyle": "custom"
+			}
+		},
+		{
+			"path": "pages/settings/index",
+			"style": {
+				"navigationBarTitleText": "设置",
+				"navigationStyle": "custom"
+			}
+		},
+		{
+			"path": "pages/team/index",
+			"style": {
+				"navigationBarTitleText": "团队成员",
+				"navigationStyle": "custom"
+			}
+		}
+	],
+	"globalStyle": {
+		"navigationBarTextStyle": "black",
+		"navigationBarTitleText": "途安",
+		"navigationBarBackgroundColor": "#F7F7F7",
+		"backgroundColor": "#F7F7F7"
+	}
+}
