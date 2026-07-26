@@ -1,0 +1,46 @@
+<launch>
+    <!-- ================================================================= -->
+    <!-- Astra Pro Data Collector                                          -->
+    <!-- Starts camera driver + frame uploader together                    -->
+    <!-- ================================================================= -->
+
+    <!-- Camera namespace -->
+    <arg name="camera_name" default="camera"/>
+
+    <!-- Frame uploader parameters -->
+    <arg name="server_url" default="http://121.199.173.166:8001/api/vehicle/frame"/>
+    <arg name="fps_mode"   default="1"/>   <!-- 0=idle, 1=1fps, 2=10fps, 3=20fps -->
+    <arg name="jpeg_quality" default="85"/>
+    <arg name="png_compression" default="1"/>
+    <arg name="request_timeout" default="3.0"/>
+
+    <!-- ================================================================= -->
+    <!-- 1. Astra Pro Camera Driver                                        -->
+    <!-- ================================================================= -->
+    <include file="$(find ros_astra_camera)/launch/astra.launch">
+        <arg name="camera_name" value="$(arg camera_name)"/>
+        <arg name="enable_point_cloud" value="false"/>
+        <arg name="enable_point_cloud_xyzrgb" value="false"/>
+        <arg name="enable_ir" value="false"/>
+        <!-- 640x480 RGB + Depth @ 30fps (driver native) -->
+        <arg name="color_width" value="640"/>
+        <arg name="color_height" value="480"/>
+        <arg name="color_fps" value="30"/>
+        <arg name="depth_width" value="640"/>
+        <arg name="depth_height" value="480"/>
+        <arg name="depth_fps" value="30"/>
+    </include>
+
+    <!-- ================================================================= -->
+    <!-- 2. Frame Sender Node                                              -->
+    <!-- ================================================================= -->
+    <node name="frame_sender" pkg="astra_data_collector" type="frame_sender.py" output="screen">
+        <param name="server_url"        value="$(arg server_url)"/>
+        <param name="fps_mode"          value="$(arg fps_mode)"/>
+        <param name="jpeg_quality"      value="$(arg jpeg_quality)"/>
+        <param name="png_compression"   value="$(arg png_compression)"/>
+        <param name="request_timeout"   value="$(arg request_timeout)"/>
+        <param name="camera_ns"         value="$(arg camera_name)"/>
+    </node>
+
+</launch>

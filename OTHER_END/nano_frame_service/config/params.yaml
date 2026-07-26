@@ -1,0 +1,16 @@
+# Astra Data Collector - Default Parameters
+#
+# FPS modes:
+#   0 = idle (no upload)
+#   1 = 1 fps  (slow, for debugging / low bandwidth)
+#   2 = 10 fps (medium)
+#   3 = 20 fps (fast, high bandwidth ~2-10 MB/s)
+#
+# Change at runtime:  rosparam set /frame_sender/fps_mode 2
+
+server_url: "http://121.199.173.166:8001/api/vehicle/frame"
+fps_mode: 1
+jpeg_quality: 85
+png_compression: 1
+request_timeout: 3.0
+camera_ns: "camera"

@@ -1,0 +1,33 @@
+*.iml
+.gradle
+/local.properties
+/.idea/caches
+/.idea/libraries
+/.idea/modules.xml
+/.idea/workspace.xml
+/.idea/navEditor.xml
+/.idea/assetWizardSettings.xml
+.DS_Store
+/build
+/captures
+.externalNativeBuild
+.cxx
+local.properties
+*.apk
+*.aab
+*.keystore
+*.jks
+app/build/
+
+# 图片资源
+*.png
+*.jpg
+*.jpeg
+*.webp
+
+# Gradle 工具生成
+*.jar
+gradle/gradle-daemon-jvm.properties
+gradle/wrapper/gradle-wrapper.properties
+gradlew
+gradlew.bat

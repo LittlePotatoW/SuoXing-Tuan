@@ -1,0 +1,30 @@
+[Unit]
+Description=Astra Pro Frame Collector
+Documentation=https://github.com/orbbec/ros_astra_camera
+After=network-online.target time-sync.target
+Wants=network-online.target
+Requires=network-online.target
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=jetson
+Group=jetson
+WorkingDirectory=/home/jetson
+ExecStart=/home/jetson/catkin_ws/src/astra_data_collector/scripts/startup.sh
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=astra-sender
+Environment="HOME=/home/jetson"
+Environment="DISPLAY=:0"
+
+# Kill signal handling
+KillMode=mixed
+KillSignal=SIGINT
+TimeoutStopSec=10
+
+[Install]
+WantedBy=multi-user.target

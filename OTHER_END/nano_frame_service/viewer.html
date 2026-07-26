@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Astra Pro Live Viewer</title>
+<style>
+  :root {
+    --bg: #0d1117; --card: #161b22; --border: #30363d;
+    --text: #c9d1d9; --accent: #58a6ff; --green: #3fb950; --red: #f85149;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: var(--bg); color: var(--text);
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    height: 100vh; display: flex; flex-direction: column;
+  }
+  .header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 8px 20px; background: var(--card); border-bottom: 1px solid var(--border);
+  }
+  .header h1 { font-size: 16px; }
+  .status { display: flex; gap: 16px; font-size: 12px; align-items: center; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 4px; }
+  .dot.ok { background: var(--green); box-shadow: 0 0 6px var(--green); }
+  .dot.err { background: var(--red); }
+  .main {
+    flex: 1; display: grid; grid-template-columns: 1fr 1fr; gap: 4px; padding: 4px;
+    overflow: hidden;
+  }
+  .panel {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 6px; display: flex; flex-direction: column; overflow: hidden;
+  }
+  .panel-title {
+    padding: 6px 12px; font-size: 12px; font-weight: 600;
+    border-bottom: 1px solid var(--border);
+    display: flex; justify-content: space-between;
+  }
+  .panel-body {
+    flex: 1; display: flex; align-items: center; justify-content: center;
+    background: #000; overflow: hidden; position: relative;
+  }
+  .panel-body img { max-width: 100%; max-height: 100%; object-fit: contain; }
+  .placeholder { color: #484f58; font-size: 14px; position: absolute; }
+  .bar {
+    display: flex; gap: 10px; align-items: center;
+    padding: 6px 16px; background: var(--card); border-top: 1px solid var(--border);
+    font-size: 13px;
+  }
+  .bar input {
+    background: var(--bg); border: 1px solid var(--border); color: var(--text);
+    padding: 5px 8px; border-radius: 4px; width: 180px; font-size: 12px;
+  }
+  .bar input:focus { outline: none; border-color: var(--accent); }
+  .bar button {
+    background: var(--accent); color: #fff; border: none;
+    padding: 5px 14px; border-radius: 4px; cursor: pointer; font-size: 12px;
+  }
+  .bar button.refresh { background: var(--border); }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>Astra Pro Live Viewer</h1>
+  <div class="status">
+    <span id="rgbStat"><span class="dot err"></span> RGB</span>
+    <span id="depthStat"><span class="dot err"></span> Depth</span>
+  </div>
+</div>
+
+<div class="main">
+  <!-- RGB -->
+  <div class="panel">
+    <div class="panel-title">RGB 彩色 <span style="color:#484f58">/camera/rgb/image_raw</span></div>
+    <div class="panel-body">
+      <img id="rgbImg" alt="RGB Stream" style="display:none">
+      <span id="rgbPH" class="placeholder">等待 RGB 数据...</span>
+    </div>
+  </div>
+  <!-- Depth -->
+  <div class="panel">
+    <div class="panel-title">Depth 深度图 <span style="color:#484f58">/camera/depth/image_color</span></div>
+    <div class="panel-body">
+      <img id="depthImg" alt="Depth Stream" style="display:none">
+      <span id="depthPH" class="placeholder">等待深度数据...</span>
+    </div>
+  </div>
+</div>
+
+<div class="bar">
+  <span>Jetson IP:</span>
+  <input id="jetIP" value="172.20.10.11">
+  <button onclick="reloadStreams()">应用</button>
+  <button class="refresh" onclick="reloadStreams()" style="background:var(--border)">刷新</button>
+  <span style="margin-left:auto;font-size:11px;color:#484f58">MJPEG Stream via ROS web_video_server</span>
+</div>
+
+<script>
+var JET_IP = '172.20.10.11';
+
+function reloadStreams() {
+  JET_IP = document.getElementById('jetIP').value.trim();
+  var rgb = document.getElementById('rgbImg');
+  var depth = document.getElementById('depthImg');
+
+  rgb.src = 'http://' + JET_IP + ':8080/stream?topic=/camera/rgb/image_raw';
+  depth.src = 'http://' + JET_IP + ':8080/stream?topic=/camera/depth/image_color';
+
+  rgb.onload = function() {
+    rgb.style.display = '';
+    document.getElementById('rgbPH').style.display = 'none';
+    document.getElementById('rgbStat').innerHTML = '<span class="dot ok"></span> RGB OK';
+  };
+  rgb.onerror = function() {
+    document.getElementById('rgbStat').innerHTML = '<span class="dot err"></span> RGB Off';
+  };
+
+  depth.onload = function() {
+    depth.style.display = '';
+    document.getElementById('depthPH').style.display = 'none';
+    document.getElementById('depthStat').innerHTML = '<span class="dot ok"></span> Depth OK';
+  };
+  depth.onerror = function() {
+    document.getElementById('depthStat').innerHTML = '<span class="dot err"></span> Depth Off';
+  };
+}
+
+window.onload = function() { reloadStreams(); };
+</script>
+</body>
+</html>

@@ -1,0 +1,16 @@
+<?xml version="1.0"?>
+<package format="2">
+  <name>astra_data_collector</name>
+  <version>0.1.0</version>
+  <description>Collect Astra Pro RGB+Depth frames and upload to reconstruction server</description>
+  <maintainer email="jetson@yahboom.com">Jetson</maintainer>
+  <license>Apache 2.0</license>
+
+  <buildtool_depend>catkin</buildtool_depend>
+
+  <depend>rospy</depend>
+  <depend>sensor_msgs</depend>
+  <depend>cv_bridge</depend>
+  <depend>message_filters</depend>
+  <depend>std_msgs</depend>
+</package>

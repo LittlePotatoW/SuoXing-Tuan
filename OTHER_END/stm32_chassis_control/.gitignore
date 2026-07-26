@@ -1,0 +1,43 @@
+# --- 三方库 (不入 git, 需自行下载) ---
+# STM32F10x 标准外设库 (STMicroelectronics)
+Library/
+# CMSIS + ST 启动文件
+Start/
+# 正点原子 (ALIENTEK) 系统代码
+System/sys/
+System/Delay/
+System/Delay.c
+System/Delay.h
+
+# Keil IDE 生成 (换机器需重建工程)
+*.uvguix.*
+*.uvoptx
+*.uvprojx
+DebugConfig/
+
+# Keil 编译产物
+Listings/
+Objects/
+Output/
+*.dep
+*.crf
+*.d
+*.o
+*.axf
+*.hex
+*.lnp
+*.lst
+*.htm
+*.build_log.htm
+*.iex
+*.scvd
+
+# 备份 & 临时文件
+*.bak
+
+# STM32CubeMX
+.mxproject
+
+# IDE
+.vscode/
+.idea/

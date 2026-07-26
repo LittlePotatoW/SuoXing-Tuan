@@ -1,0 +1,49 @@
+<launch>
+    <!-- ================================================================= -->
+    <!-- Auto-start Launch for Astra Pro Data Collection                   -->
+    --> Starts camera driver + frame sender together.                        -->
+    --> Designed to be run by systemd service.                               -->
+    --> If camera is not plugged in at boot, driver will wait for it.        -->
+    --> Frame sender auto-detects camera & network and recovers.             -->
+    <!-- ================================================================= -->
+
+    <!-- Camera namespace -->
+    <arg name="camera_name" default="camera"/>
+
+    <!-- Frame rate mode: 1=1fps(default), 2=10fps, 3=20fps, 0=idle -->
+    <arg name="fps_mode" default="1"/>
+
+    <!-- Server endpoint -->
+    <arg name="server_url" default="http://121.199.173.166:8001/api/vehicle/frame"/>
+
+    <!-- ================================================================= -->
+    <!-- 1. Astra Pro Camera Driver                                        -->
+    --> The camera_node will keep retrying if the camera is not connected.   -->
+    <!-- ================================================================= -->
+    <include file="$(find ros_astra_camera)/launch/astra.launch">
+        <arg name="camera_name" value="$(arg camera_name)"/>
+        <arg name="enable_point_cloud" value="false"/>
+        <arg name="enable_point_cloud_xyzrgb" value="false"/>
+        <arg name="enable_ir" value="false"/>
+        <arg name="color_width" value="640"/>
+        <arg name="color_height" value="480"/>
+        <arg name="color_fps" value="30"/>
+        <arg name="depth_width" value="640"/>
+        <arg name="depth_height" value="480"/>
+        <arg name="depth_fps" value="30"/>
+    </include>
+
+    <!-- ================================================================= -->
+    <!-- 2. Frame Sender (resilient, auto-reconnect)                       -->
+    <!-- ================================================================= -->
+    <node name="frame_sender" pkg="astra_data_collector"
+          type="frame_sender.py" output="screen">
+        <param name="server_url"        value="$(arg server_url)"/>
+        <param name="fps_mode"          value="$(arg fps_mode)"/>
+        <param name="jpeg_quality"      value="85"/>
+        <param name="png_compression"   value="1"/>
+        <param name="request_timeout"   value="3.0"/>
+        <param name="camera_ns"         value="$(arg camera_name)"/>
+    </node>
+
+</launch>
