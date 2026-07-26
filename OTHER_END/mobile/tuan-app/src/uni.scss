@@ -1,0 +1,81 @@
+/**
+ * Tuan App — 设计规范 SCSS 变量
+ * 基于 IBM Carbon（主风格）+ Linear（圆角精度）+ Replicate（留白节奏）融合设计体系
+ * 适用场景：地铁隧道智能巡检（简约、大气、专业、企业级）
+ */
+
+/* ===== 主色（IBM 蓝色系核心基调） ===== */
+$uni-color-primary: #111111;        /* 强调黑 */
+$uni-color-brand: #466CAC;          /* 主品牌蓝 — 地图/户外/巡检场景 */
+$uni-color-brand-hover: #3A5D9E;    /* 品牌蓝悬停态 */
+$uni-color-accent-orange: #F2994A;  /* 辅助暖橙（低电/告警） */
+$uni-color-accent-mint: #7BC8A4;    /* 辅助薄荷绿（正常/在线） */
+$uni-color-success: #24A148;        /* 语义绿 — 成功/正常 */
+$uni-color-warning: #F2994A;        /* 语义橙 — 警告/中电 */
+$uni-color-error: #DA1E28;          /* 语义红 — 错误/低电 */
+
+/* ===== 背景色（IBM 白色+浅灰基调） ===== */
+$uni-bg-color: #FFFFFF;
+$uni-bg-color-grey: #F7F7F7;        /* 页面基础背景 */
+$uni-bg-color-module: #F1F1F1;      /* 浅灰模块背景 */
+$uni-bg-color-hover: #F1F1F1;
+$uni-bg-color-mask: rgba(0, 0, 0, 0.4);
+$uni-bg-warm: #F7F0EC;              /* 暖色页面背景 */
+$uni-bg-cool: #E9EEF3;              /* 冷色地图背景 */
+$uni-bg-glass: rgba(255, 255, 255, 0.88); /* 玻璃浮层背景 */
+
+/* ===== 文字色（IBM ink 体系） ===== */
+$uni-text-color: #111111;            /* 一级文字 */
+$uni-text-color-secondary: #5F5F5F;  /* 二级文字 */
+$uni-text-color-tertiary: #8E8E8E;   /* 三级文字／辅助说明 */
+$uni-text-color-inverse: #FFFFFF;
+$uni-text-color-placeholder: #B5B5B5;
+$uni-text-color-disable: #B5B5B5;
+
+/* ===== 边框色（IBM hairline 体系） ===== */
+$uni-border-color: #DADADA;
+$uni-border-color-light: #E8E8E8;
+$uni-border-color-strong: #BDBDBD;
+$uni-border-color-active: #111111;
+
+/* ===== 阴影（克制使用，依赖表面色+边框区分层级） ===== */
+$uni-shadow-weak: 0 4rpx 16rpx rgba(0, 0, 0, 0.04);
+$uni-shadow-standard: 0 8rpx 24rpx rgba(0, 0, 0, 0.06);
+$uni-shadow-float: 0 -8rpx 32rpx rgba(0, 0, 0, 0.12);
+
+/* ===== 圆角（借鉴 Linear 的精确圆角体系，适配移动端触控） ===== */
+$uni-border-radius-sm: 8rpx;        /* 小标签/徽章 */
+$uni-border-radius-base: 16rpx;     /* 按钮/输入框 */
+$uni-border-radius-md: 20rpx;       /* 小卡片 */
+$uni-border-radius-lg: 24rpx;       /* 标准卡片 */
+$uni-border-radius-xl: 32rpx;       /* 大卡片/弹窗 */
+$uni-border-radius-full: 999px;     /* 胶囊/头像 */
+$uni-border-radius-circle: 50%;
+
+/* ===== 字体族 ===== */
+$uni-font-family: 'PingFang SC', 'SF Pro Display', Inter, system-ui, -apple-system, sans-serif;
+
+/* ===== 字号层级（严格三档体系） ===== */
+$uni-font-size-page-title: 20px;    /* 页面主标题 — 仅此级别使用 */
+$uni-font-size-card-title: 16px;    /* 卡片标题 / 列表标题 */
+$uni-font-size-body: 14px;          /* 正文 / 标签 / 数值 / 时间 / 状态 */
+$uni-font-size-caption: 12px;       /* 辅助说明 / 角标 */
+
+/* ===== 字重（严格四档） ===== */
+$uni-font-weight-bold: 700;         /* 仅页面主标题使用 */
+$uni-font-weight-semibold: 600;     /* 卡片标题、列表标题、数据数值 */
+$uni-font-weight-regular: 400;      /* 正文、标签、描述、时间、状态 */
+$uni-font-weight-light: 300;        /* 极少数装饰性大文字 */
+
+/* ===== 间距（4px 基准栅格，借鉴 Replicate 宽松留白） ===== */
+$uni-spacing-xs: 4px;               /*  8rpx — 极小间距 */
+$uni-spacing-sm: 8px;               /* 16rpx — 标签与数值 / 图标与文字 */
+$uni-spacing-base: 12px;            /* 24rpx — 内容块内间距 */
+$uni-spacing-md: 16px;              /* 32rpx — 行间距 / 列表项间距 */
+$uni-spacing-lg: 20px;              /* 40rpx — 卡片内边距 */
+$uni-spacing-xl: 24px;              /* 48rpx — 卡片之间间距 */
+$uni-spacing-2xl: 32px;             /* 64rpx — 大区域间距 */
+$uni-spacing-3xl: 40px;             /* 80rpx — 页面级间距 */
+
+/* ===== 透明度 ===== */
+$uni-opacity-disabled: 0.3;
