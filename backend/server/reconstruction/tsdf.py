@@ -63,7 +63,7 @@ def reconstruct_tsdf(frames, positions, config: dict) -> dict | None:
 
     volume = o3d.pipelines.integration.ScalableTSDFVolume(
         voxel_length=vl, sdf_trunc=st,
-        color_type=o3d.pipelines.integration.TSDFVolumeColorType.RGBD,
+        color_type=o3d.pipelines.integration.TSDFVolumeColorType.RGB8,
     )
 
     integrated = 0
@@ -105,16 +105,16 @@ def reconstruct_tsdf(frames, positions, config: dict) -> dict | None:
         # 相机 Z前→车体 X前, X右→-Y左, Y下→-Z上
         rot_cam2veh = np.eye(4)
         rot_cam2veh[:3, :3] = np.array([
-            [-1, 0,  0],   # 相机 Z → vehicle X
-            [0,  0, -1],   # 相机 X → vehicle -Y
-            [0,  1,  0],   # 相机 Y → vehicle -Z
+            [0, -1, 0],   # 相机 Z → vehicle X
+            [0, 0, -1],   # 相机 X → vehicle -Y
+            [1, 0, 0],   # 相机 Y → vehicle -Z
         ])
-        # 绕相机 X 轴旋转 90°（立起躺倒的点云）
-        rot_cam2veh[:3, :3] = rot_cam2veh[:3, :3] @ np.array([
-            [1, 0,  0],
-            [0, 0,  1],
-            [0, -1, 0],
-        ])
+        # rot_cam2veh[:3, :3] = np.array([
+        #     [0, 0,  1],   # 相机 Z → vehicle X
+        #     [-1, 0, 0],   # 相机 X → vehicle -Y
+        #     [0, -1, 0],   # 相机 Y → vehicle -Z
+        # ])
+
         # 相机 Z 轴旋转（角度从 config 读，默认 0，正=逆时针）
         cam_z_angle = tsdf_cfg.get('cam_rotate_deg', 0)
         if cam_z_angle != 0:

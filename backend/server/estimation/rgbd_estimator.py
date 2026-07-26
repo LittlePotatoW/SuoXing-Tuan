@@ -77,7 +77,7 @@ class RgbdEstimator(BaseEstimator):
 
         # actor
         est_cfg = config.get('estimation', {})
-        self._frame_skip = est_cfg.get('odometry_frame_skip', 3)
+        self._frame_skip = est_cfg.get('odometry_frame_skip', 1)
         self._pending_frame: Optional[tuple] = None
         self._pending_lock = threading.Lock()
         self._actor_running = False
@@ -196,14 +196,21 @@ class RgbdEstimator(BaseEstimator):
                 odometry_count += 1
 
                 with self._lock:
-                    h = math.radians(self._heading)
+                    h_before = self._heading
+                    x_before, y_before = self._x, self._y
+                    h_rad = math.radians(h_before)
                     # 相机帧 (X右 Z前) → 车辆帧 (X前 Y左): veh_x=dz, veh_y=-dx
-                    # 世界帧: 绕 heading 旋转
-                    self._x += dz * math.cos(h) + dx * math.sin(h)
-                    self._y += dz * math.sin(h) - dx * math.cos(h)
+                    self._x += dz * math.cos(h_rad) + dx * math.sin(h_rad)
+                    self._y += dz * math.sin(h_rad) - dx * math.cos(h_rad)
                     self._heading += dh
                     self._last_ts = timestamp
                     self._traj_append(Position(self._last_ts, self._x, self._y, self._heading))
+                    logger.warning(
+                        "[Rgbd] #%d 相机(dx=%.4f dz=%.4f dh=%.2f°) "
+                        "姿态(%.2f°→%.2f°) 位置(%.2f,%.2f)→(%.2f,%.2f)",
+                        odometry_count, dx, dz, dh,
+                        h_before, self._heading,
+                        x_before, y_before, self._x, self._y)
 
                 last_processed_ts = timestamp
                 error_count = 0
@@ -228,19 +235,21 @@ class RgbdEstimator(BaseEstimator):
         if rgb is None or depth is None:
             return None
 
+        import cv2
         if self._prev_rgb is None:
-            self._prev_rgb = rgb
+            self._prev_rgb = cv2.cvtColor(rgb, cv2.COLOR_BGR2RGB)
             self._prev_depth = depth
             logger.warning("[Rgbd] 首帧已存储, %dx%d", rgb.shape[1], rgb.shape[0])
             return None
 
         try:
+            rgb_rgb = cv2.cvtColor(rgb, cv2.COLOR_BGR2RGB)
             rgbd1 = self._o3d.geometry.RGBDImage.create_from_color_and_depth(
                 self._o3d.geometry.Image(self._prev_rgb),
                 self._o3d.geometry.Image(self._prev_depth),
                 depth_scale=self._depth_scale, convert_rgb_to_intensity=False)
             rgbd2 = self._o3d.geometry.RGBDImage.create_from_color_and_depth(
-                self._o3d.geometry.Image(rgb),
+                self._o3d.geometry.Image(rgb_rgb),
                 self._o3d.geometry.Image(depth),
                 depth_scale=self._depth_scale, convert_rgb_to_intensity=False)
 
@@ -250,7 +259,7 @@ class RgbdEstimator(BaseEstimator):
                 jacobian=self._o3d.pipelines.odometry.RGBDOdometryJacobianFromHybridTerm(),
                 option=self._option)
 
-            self._prev_rgb = rgb
+            self._prev_rgb = rgb_rgb
             self._prev_depth = depth
 
             if not success:

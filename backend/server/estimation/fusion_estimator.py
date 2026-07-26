@@ -87,7 +87,7 @@ class FusionEstimator(BaseEstimator):
             logger.warning("open3d 未安装, 视觉里程计不可用")
 
         # actor
-        self._frame_skip = est_cfg.get('odometry_frame_skip', 3)
+        self._frame_skip = est_cfg.get('odometry_frame_skip', 1)
         self._pending_frame: Optional[tuple] = None
         self._pending_lock = threading.Lock()
         self._actor_running = False
@@ -290,19 +290,21 @@ class FusionEstimator(BaseEstimator):
         if rgb is None or depth is None:
             return None
 
+        import cv2
         if self._prev_rgb is None:
-            self._prev_rgb = rgb
+            self._prev_rgb = cv2.cvtColor(rgb, cv2.COLOR_BGR2RGB)
             self._prev_depth = depth
             logger.warning("[Fusion] 首帧已存储, %dx%d", rgb.shape[1], rgb.shape[0])
             return None
 
         try:
+            rgb_rgb = cv2.cvtColor(rgb, cv2.COLOR_BGR2RGB)
             rgbd1 = self._o3d.geometry.RGBDImage.create_from_color_and_depth(
                 self._o3d.geometry.Image(self._prev_rgb),
                 self._o3d.geometry.Image(self._prev_depth),
                 depth_scale=self._depth_scale, convert_rgb_to_intensity=False)
             rgbd2 = self._o3d.geometry.RGBDImage.create_from_color_and_depth(
-                self._o3d.geometry.Image(rgb),
+                self._o3d.geometry.Image(rgb_rgb),
                 self._o3d.geometry.Image(depth),
                 depth_scale=self._depth_scale, convert_rgb_to_intensity=False)
 
@@ -312,7 +314,7 @@ class FusionEstimator(BaseEstimator):
                 jacobian=self._o3d.pipelines.odometry.RGBDOdometryJacobianFromHybridTerm(),
                 option=self._option)
 
-            self._prev_rgb = rgb
+            self._prev_rgb = rgb_rgb
             self._prev_depth = depth
 
             if not success:

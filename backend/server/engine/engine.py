@@ -482,7 +482,7 @@ class ReconstructionEngine:
                     from server.reconstruction import reconstruct_tsdf
                     surface_result = reconstruct_tsdf(frames, positions, config)
                 except Exception:
-                    logger.exception("TSDF 重建失败，回退到点云")
+                    logger.exception("TSDF 重建失败")
             else:
                 surface_cfg = config.get('reconstruction', {}).get('surface', {})
                 if surface_cfg.get('enabled', False):
