@@ -1,111 +1,97 @@
 // ============================================================
 // frontend/src/services/data-saver/data-saver.ts
-// 数据保存层 (Layer 0.5)：录制 session，内存缓存后导出下载
-//
-// 设计与用法:
-//   导出 createSession()  → Session
-//   Session.recordTelemetry(t) / recordFrame(f) / finalize() / cancel()
+// 数据保存层: 录制 session → 10帧批量 POST 到后端写盘
 // ============================================================
 
+import { createSession as apiCreate, saveSessionFrame, saveSessionManifest } from '@/api/session'
 import type { Telemetry, Frame } from '@/types/data'
 
-interface ManifestEntry {
-  telemetry: Array<{ ts: number; speed: number; steering: number }>
-  frames: Array<{ id: number; ts: number; image: string; depth: string }>
-}
+const BATCH_SIZE = 10 // 每批帧数
 
 export interface Session {
   recordTelemetry(t: Telemetry): void
-  recordFrame(f: Frame): void
+  recordFrame(f: Frame): Promise<void>
   finalize(): Promise<void>
   cancel(): void
 }
 
 export function createSession(): Session {
   const startTime = Date.now() / 1000
-  const telemetry: ManifestEntry['telemetry'] = []
-  const frames: ManifestEntry['frames'] = []
-  const imageBlobs: Map<number, Blob> = new Map()
-  const depthBlobs: Map<number, Blob> = new Map()
+  const telemetry: Array<{ ts: number; speed: number; steering: number }> = []
+  const frameMetas: Array<{ id: number; ts: number; image: string; depth: string }> = []
+  const pendingFrames: Array<{ id: number; image_name: string; depth_name: string; image_data: string; depth_data: string }> = []
+  let frameIdx = 0
+  let sessionName = ''
+  let cancelled = false
+  let created = false
 
-  function recordTelemetry(t: Telemetry): void {
-    telemetry.push({
-      ts: t.timestamp - startTime,
-      speed: t.speed,
-      steering: t.steering_angle,
-    })
+  async function ensureCreated() {
+    if (created || cancelled) return
+    const dt = new Date()
+    sessionName = `session_${dt.getFullYear()}${pad(dt.getMonth() + 1)}${pad(dt.getDate())}_${pad(dt.getHours())}${pad(dt.getMinutes())}${pad(dt.getSeconds())}`
+    await apiCreate(sessionName, startTime, 100)
+    created = true
   }
 
-  function recordFrame(f: Frame): void {
-    const id = frames.length + 1
+  function recordTelemetry(t: Telemetry): void {
+    if (cancelled) return
+    telemetry.push({ ts: t.timestamp - startTime, speed: t.speed, steering: t.steering_angle })
+  }
+
+  async function recordFrame(f: Frame): Promise<void> {
+    if (cancelled) return
+    await ensureCreated()
+    if (cancelled) return
+
+    frameIdx++
+    const id = frameIdx
     const imageName = `${String(id).padStart(5, '0')}.jpg`
     const depthName = `${String(id).padStart(5, '0')}.png`
 
-    frames.push({
-      id,
-      ts: f.timestamp - startTime,
+    frameMetas.push({
+      id, ts: f.timestamp - startTime,
       image: `frames/${imageName}`,
       depth: `frames/${depthName}`,
     })
 
-    // base64 → Blob
-    imageBlobs.set(id, _b64ToBlob(f.image, 'image/jpeg'))
-    depthBlobs.set(id, _b64ToBlob(f.depth_map, 'image/png'))
+    pendingFrames.push({
+      id, image_name: imageName, depth_name: depthName,
+      image_data: f.image, depth_data: f.depth_map,
+    })
+
+    if (pendingFrames.length >= BATCH_SIZE) await flushBatch()
+  }
+
+  async function flushBatch() {
+    if (!pendingFrames.length) return
+    const batch = pendingFrames.splice(0)
+    try {
+      await saveSessionFrame({ session_name: sessionName, frames: batch })
+    } catch { /* 单批失败不中断 */ }
   }
 
   async function finalize(): Promise<void> {
-    const manifest = {
+    if (cancelled || !created) return
+    await flushBatch()
+    await saveSessionManifest(sessionName, {
       version: 1,
       start_time: startTime,
       end_time: Date.now() / 1000,
-      frame_count: frames.length,
+      frame_count: frameMetas.length,
       telemetry_interval_ms: 100,
       telemetry,
-      frames,
-    }
-
-    const manifestBlob = new Blob(
-      [JSON.stringify(manifest, null, 2)],
-      { type: 'application/json' },
-    )
-
-    // 打包下载：用 JSZip 或逐个下载
-    _downloadBlob(manifestBlob, 'manifest.json')
-
-    for (const [id, blob] of imageBlobs) {
-      const fi = frames.find((f) => f.id === id)
-      if (fi) _downloadBlob(blob, fi.image.split('/').pop()!)
-    }
-    for (const [id, blob] of depthBlobs) {
-      const fi = frames.find((f) => f.id === id)
-      if (fi) _downloadBlob(blob, fi.depth.split('/').pop()!)
-    }
+      frames: frameMetas,
+    })
   }
 
   function cancel(): void {
+    cancelled = true
     telemetry.length = 0
-    frames.length = 0
-    imageBlobs.clear()
-    depthBlobs.clear()
+    frameMetas.length = 0
+    pendingFrames.length = 0
   }
 
   return { recordTelemetry, recordFrame, finalize, cancel }
 }
 
-function _b64ToBlob(b64: string, mime: string): Blob {
-  const byteChars = atob(b64)
-  const bytes = new Uint8Array(byteChars.length)
-  for (let i = 0; i < byteChars.length; i++) {
-    bytes[i] = byteChars.charCodeAt(i)
-  }
-  return new Blob([bytes], { type: mime })
-}
-
-function _downloadBlob(blob: Blob, filename: string): void {
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = filename
-  a.click()
-  URL.revokeObjectURL(url)
-}
+function pad(n: number) { return String(n).padStart(2, '0') }

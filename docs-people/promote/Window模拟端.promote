@@ -1,0 +1,6 @@
+现在我希望在C:\Users\小土豆\Desktop\SuoXing-Tuan-1\OTHER_END\Astra_Pro_LocalNetConnect里面写一个window程序，启动后，可以驱动我的Astra发送数据。
+这个程序将会放在另一台电脑上，然后通过我现在这个程序的局域网连接，连接上，就可以发送数据（深度图和彩色图）阅读C:\Users\小土豆\Desktop\SuoXing-Tuan-1\docs\局域网连接协议.md
+这个程序要有可视化界面，能显示目前采集情况和发送情况（日志）
+这个外设文档看referrence-local\奥比中光Astra Pro
+这个程序要能调整发送的参数，比如图片长宽等，点击启动以后就不能再修改发送参数了
+给我方案。

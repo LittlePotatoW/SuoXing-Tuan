@@ -31,10 +31,10 @@ rgb_camera:
 depth_camera:
   width: 640                    # 深度图宽度 (px)
   height: 480                   # 深度图高度 (px)
-  fx: 0.0                       # x 方向焦距 (px)
-  fy: 0.0                       # y 方向焦距 (px)
-  cx: 0.0                       # 主点 x 坐标 (px)
-  cy: 0.0                       # 主点 y 坐标 (px)
+  fx: 573.0                     # x 方向焦距 (px), = 320/tan(58.4°/2)
+  fy: 572.0                     # y 方向焦距 (px), = 240/tan(45.5°/2)
+  cx: 320.0                     # 主点 x 坐标 (px)
+  cy: 240.0                     # 主点 y 坐标 (px)
   fps: 30                       # 帧率
   hfov: 58.4                    # 水平视场角 (度)
   vfov: 45.5                    # 垂直视场角 (度)
@@ -46,6 +46,7 @@ depth:
   min_depth: 0.6                # 最小有效深度 (m), Astra Pro 盲区
   max_depth: 8.0                # 最大有效深度 (m)
   depth_scale: 1000             # 深度值转换系数, 原始值 / scale = 米
+  subsample: 4                  # 深度图采样步长, 1=每像素, 2=每2x2取1点(点数1/4), 3=每3x3取1点(1/9)
 
 # -------------------------------------------
 # 深度相机 → 小车 外参（安装位姿）
@@ -55,7 +56,7 @@ depth:
 # -------------------------------------------
 camera_to_vehicle:
   rotation: [0.0, 0.0, 0.0]     # 欧拉角 (roll, pitch, yaw) 度, 相机 → 小车
-  translation: [0.0, 0.0, 0.0]  # 平移 (x, y, z) m, 相机光心在小车坐标系中的位置
+  translation: [0.0, 0.0, 0.35]  # 平移 (x, y, z) m, 相机光心在小车坐标系中的位置
 
 # -------------------------------------------
 # 重建参数
@@ -63,7 +64,20 @@ camera_to_vehicle:
 reconstruction:
   mode: "incremental"           # "full" 全量重建 / "incremental" 增量重建
   frame_threshold: 30           # 累积多少帧触发一次重建
-  voxel_size: 0.01              # 点云降采样体素大小 (m), 深度相机点云密集，体素宜小
+  voxel_size: 0.05              # 点云降采样体素大小 (m)
+  method: "poisson"              # "poisson" | "tsdf"
+  max_points: 2000000            # 最大点数，超限自动降采样
+  crack_dedup_radius: 0.3        # 缺陷 3D 去重半径 (m)
+  tsdf:
+    voxel_length: 0.02           # TSDF 体素分辨率 (m)
+    sdf_trunc: 0.30              # TSDF 截断距离 (m)
+    cam_rotate_deg: 0            # 相机 Z 轴旋转: 90=前→左, -90=前→右, 180=前→后
+  surface:
+    enabled: true              # 开启 Poisson 表面重建 (需 open3d)
+    poisson_depth: 8            # 6~10, 越高越精细, 计算量指数增长
+    outlier_nb: 20              # 离群点剔除: 邻居数
+    outlier_std: 2.0            # 离群点剔除: 标准差倍数
+    density_filter: 0.10        # 去掉密度最低的 N% 三角面
 
 # -------------------------------------------
 # 位置估计器
@@ -74,15 +88,16 @@ estimation:
   initial_x: 0.0               # 初始 x 坐标 (m)
   initial_y: 0.0               # 初始 y 坐标 (m)
   initial_heading: 0.0         # 初始航向角 (度), 0 = 正前方
-  wheelbase: 2.0               # 车辆轴距 (m), 模式1/4 用
+  wheelbase: 1.5               # 车辆轴距 (m), 模式1/4 用
   constant_speed: 1.0          # 模式2 默认速度 (m/s)
-  fusion_weight: 0.5           # 模式4 融合权重 (0=纯视觉, 1=纯轮式)
+  fusion_weight: 0.5
+  odometry_frame_skip: 1       # RGB-D里程计跳帧数, 1=每帧
   max_history: 10000            # 最大轨迹存储点数
 
 # -------------------------------------------
 # YOLO 检测参数
 # -------------------------------------------
 detection:
-  model_path: "models/yolo.pt"  # 模型文件路径
-  conf_threshold: 0.5           # 置信度阈值
-  device: "cuda"                # 推理设备: "cuda" / "cpu"
+  model_path: "models/crack-detector.pt"  # 模型文件路径
+  conf_threshold: 0.3           # 置信度阈值
+  device: "cpu"                 # 推理设备: "cuda" / "cpu"

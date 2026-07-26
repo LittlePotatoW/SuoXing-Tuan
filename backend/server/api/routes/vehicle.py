@@ -11,36 +11,62 @@
 #   GET  /estimator/config   查询估计器配置
 # ============================================================
 
+import asyncio
+import logging
+
 from fastapi import APIRouter
 
 import uuid
+
+_last_broadcast_ts = 0.0
+_pool_probe_count = 0
+_pool_logger = logging.getLogger("threadpool")
+
+def _probe_thread_pool() -> None:
+    """探针: 记录默认线程池状态 (每30帧或队列>5时记录)"""
+    global _pool_probe_count
+    _pool_probe_count += 1
+    try:
+        pool = asyncio.get_running_loop()._default_executor
+    except Exception:
+        return
+    if pool is None:
+        return
+    try:
+        qsize = pool._work_queue.qsize()
+        active = sum(1 for t in pool._threads if t.is_alive()) if hasattr(pool, '_threads') else -1
+        max_w = pool._max_workers
+        if _pool_probe_count % 30 == 0 or qsize > 5:
+            _pool_logger.warning("[Pool] queue=%d/%d active=%d max=%d",
+                                qsize, max_w, active, max_w)
+    except Exception:
+        pass
 
 from server.api.schemas.vehicle import (
     TelemetryRequest, PositionResponse, FrameRequest,
     EstimatorResetRequest, EstimatorConfigResponse,
 )
-from server.estimation import PositionEstimator, Position
+from server.estimation import Position, get_manager
 
 router = APIRouter(prefix="/api/vehicle", tags=["vehicle"])
 
 
 @router.post("/telemetry", status_code=200)
 def post_telemetry(body: TelemetryRequest):
-    """上报一条遥测数据（速度+转向），更新位置估计器"""
-    est = PositionEstimator.create()
-    est.update_telemetry(
+    """上报一条遥测数据（速度+转向），manager 按模式决定是否转发"""
+    mgr = get_manager()
+    mgr.handle_telemetry(
         timestamp=body.timestamp,
         speed=body.speed,
         steering_angle=body.steering_angle,
     )
-    return {"status": "ok"}
+    return {"status": "ok", "mode": mgr.get_config()['mode']}
 
 
 @router.get("/position", response_model=PositionResponse)
 def get_position() -> PositionResponse:
     """查询当前位置"""
-    est = PositionEstimator.create()
-    pos: Position = est.get_position()
+    pos: Position = get_manager().get_position()
     return PositionResponse(
         timestamp=pos.timestamp,
         x=pos.x,
@@ -50,18 +76,45 @@ def get_position() -> PositionResponse:
 
 
 @router.post("/frame", status_code=200)
-def post_frame(body: FrameRequest):
+async def post_frame(body: FrameRequest):
     """接收一帧深度相机数据 (RGB + 深度图), 推入重建引擎 + 位置估计器"""
     frame_id = uuid.uuid4().hex[:12]
 
-    # 位置估计器 (模式3/4 需要帧数据)
-    est = PositionEstimator.create()
-    est.update_frame(body.timestamp, body.image, body.depth_map)
+    def _proc():
+        # 位置估计器 (manager 按模式决定是否转发帧)
+        get_manager().handle_frame(body.timestamp, body.image, body.depth_map)
 
-    # 重建引擎
-    from server.engine import ReconstructionEngine
-    engine = ReconstructionEngine.create()
-    engine.push_frame(frame_id, body.timestamp, body.image, body.depth_map)
+        # 重建引擎
+        from server.engine import ReconstructionEngine
+        engine = ReconstructionEngine.create()
+        engine.push_frame(frame_id, body.timestamp, body.image, body.depth_map)
+
+        # 检查是否有新的重建结果
+        result = engine.get_result()
+        return result
+
+    loop = asyncio.get_running_loop()
+    result = await loop.run_in_executor(None, _proc)
+    _probe_thread_pool()
+
+    # 有新的重建结果 → 广播给所有 WebSocket 客户端
+    global _last_broadcast_ts
+    if result and result.get("timestamp") and result["timestamp"] != _last_broadcast_ts:
+        _last_broadcast_ts = result["timestamp"]
+        print(f"[WS] broadcast rebuild_complete, ts={result['timestamp']}, mesh={result.get('mesh_data') is not None}")
+        from server.api.routes.reconstruction import _broadcast
+        asyncio.create_task(_broadcast({
+            "type": "rebuild_complete",
+            "data": result,
+        }))
+    elif result and result.get("timestamp"):
+        pass  # 已广播过，跳过
+    else:
+        if result is not None and not result.get("timestamp"):
+            pass  # 无新结果
+        elif result is None:
+            pass  # 引擎尚未产出结果
+
     return {"status": "ok", "frame_id": frame_id}
 
 
@@ -72,27 +125,20 @@ def post_frame(body: FrameRequest):
 @router.post("/estimator/reset", status_code=200)
 def reset_estimator(body: EstimatorResetRequest):
     """重置位置估计器，可选切换模式和参数"""
-    PositionEstimator.stop()
-    est = PositionEstimator.create(mode=body.mode)
-    if body.wheelbase is not None:
-        est._wheelbase = body.wheelbase
-    if body.constant_speed is not None:
-        est._constant_speed = body.constant_speed
-    if body.initial_x is not None:
-        est._initial_x = body.initial_x
-        est._x = body.initial_x
-    if body.initial_y is not None:
-        est._initial_y = body.initial_y
-        est._y = body.initial_y
-    if body.initial_heading is not None:
-        est._initial_heading = body.initial_heading
-        est._heading = body.initial_heading
-    return {"status": "ok", "mode": est._mode}
+    overrides = {
+        'wheelbase': body.wheelbase,
+        'constant_speed': body.constant_speed,
+        'initial_x': body.initial_x,
+        'initial_y': body.initial_y,
+        'initial_heading': body.initial_heading,
+    }
+    overrides = {k: v for k, v in overrides.items() if v is not None}
+    get_manager().create(body.mode, overrides if overrides else None)
+    return {"status": "ok", "mode": get_manager().get_config()['mode']}
 
 
 @router.get("/estimator/config", response_model=EstimatorConfigResponse)
 def get_estimator_config() -> EstimatorConfigResponse:
     """查询位置估计器当前配置和状态"""
-    est = PositionEstimator.create()
-    cfg = est.get_config()
+    cfg = get_manager().get_config()
     return EstimatorConfigResponse(**cfg)

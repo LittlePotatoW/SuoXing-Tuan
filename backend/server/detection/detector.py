@@ -49,6 +49,10 @@ class Detector:
             try:
                 from ultralytics import YOLO
                 self._model = YOLO(str(model_file))
+                # 预热：做一次空推理触发 fuse，避免多线程首次调用竞态
+                import numpy as np
+                dummy = np.zeros((64, 64, 3), dtype=np.uint8)
+                self._model(dummy, conf=0.9, device=self._device, verbose=False)
                 self._model_available = True
                 logger.info("YOLO 模型已加载: %s (device=%s)",
                             self._model_path, self._device)
@@ -89,7 +93,6 @@ class Detector:
             [{id, class_name, confidence, bbox_2d: [x1,y1,x2,y2]}, ...]
         """
         if not self._model_available:
-            logger.warning("检测模型不可用")
             return []
 
         try:
@@ -97,7 +100,6 @@ class Detector:
             if image is None:
                 return []
         except Exception:
-            logger.exception("图像解码失败")
             return []
 
         results = self._model(

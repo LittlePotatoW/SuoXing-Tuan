@@ -33,6 +33,7 @@ class EstimatorResetRequest(BaseModel):
     mode: str | None = Field(None, description="bicycle|constant|rgbd|fusion")
     wheelbase: float | None = None
     constant_speed: float | None = None
+    fusion_weight: float | None = None
     initial_x: float | None = None
     initial_y: float | None = None
     initial_heading: float | None = None
@@ -40,8 +41,9 @@ class EstimatorResetRequest(BaseModel):
 
 class EstimatorConfigResponse(BaseModel):
     mode: str
-    wheelbase: float
-    constant_speed: float
+    wheelbase: float = 0.0
+    constant_speed: float = 0.0
+    fusion_weight: float = 0.0
     initial_x: float
     initial_y: float
     initial_heading: float
