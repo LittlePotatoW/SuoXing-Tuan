@@ -1,8 +1,8 @@
-# 索性途安
+# Tuan
 
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-北京科技大学 索性途安实践团 — 隧道缺陷智能检测与三维重建系统。
+隧道缺陷智能检测与三维重建系统。
 
 ## 技术栈
 
